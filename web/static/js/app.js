@@ -60,6 +60,102 @@ const el = {
 };
 
 const labelNamesCacheByOrg = new Map();
+const labelValuesCache = new Map(); // key: `${orgId}::${labelName}`
+
+// ---------- Custom autocomplete dropdown ----------
+//
+// We deliberately don't use the native <datalist> element here: Safari's
+// support for it is unreliable (it often only shows suggestions once you
+// start typing, not on a plain click/focus, and can miss options added to
+// the datalist dynamically after the page loads). This small dropdown is
+// fully controlled by us, so "click the field, see what's available"
+// works the same in every browser.
+
+function createAutocomplete(input, { getOptions }) {
+  const wrap = input.parentElement; // .autocomplete-wrap, position:relative
+  const dropdown = document.createElement("div");
+  dropdown.className = "autocomplete-dropdown";
+  dropdown.hidden = true;
+  wrap.appendChild(dropdown);
+
+  let currentOptions = [];
+  let activeIndex = -1;
+
+  function renderOptions(options) {
+    currentOptions = options;
+    activeIndex = -1;
+    dropdown.innerHTML = "";
+    if (options.length === 0) {
+      const empty = document.createElement("div");
+      empty.className = "autocomplete-empty";
+      empty.textContent = "Sin coincidencias";
+      dropdown.appendChild(empty);
+      return;
+    }
+    options.forEach((opt) => {
+      const item = document.createElement("div");
+      item.className = "autocomplete-item";
+      item.textContent = opt;
+      // mousedown (not click) + preventDefault fires before the input's
+      // blur, so selecting an option never gets swallowed by blur-hiding
+      // the dropdown first.
+      item.addEventListener("mousedown", (evt) => {
+        evt.preventDefault();
+        input.value = opt;
+        hide();
+      });
+      dropdown.appendChild(item);
+    });
+  }
+
+  function highlight(index) {
+    activeIndex = index;
+    [...dropdown.children].forEach((child, i) => {
+      child.classList.toggle("active", i === activeIndex);
+    });
+  }
+
+  // Focusing the field always shows every available option, even if the
+  // field already has text in it (e.g. the prefilled "namespace" key) —
+  // clicking in should mean "show me what's possible", not "filter by
+  // what's already there". Typing afterwards narrows the list down.
+  async function showAll() {
+    renderOptions((await getOptions()) || []);
+    dropdown.hidden = false;
+  }
+
+  async function showFiltered() {
+    const all = (await getOptions()) || [];
+    const q = input.value.trim().toLowerCase();
+    const filtered = q ? all.filter((o) => o.toLowerCase().includes(q)) : all;
+    renderOptions(filtered);
+    dropdown.hidden = false;
+  }
+
+  function hide() {
+    dropdown.hidden = true;
+  }
+
+  input.addEventListener("focus", showAll);
+  input.addEventListener("input", showFiltered);
+  input.addEventListener("blur", () => setTimeout(hide, 120));
+  input.addEventListener("keydown", (evt) => {
+    if (dropdown.hidden) return;
+    if (evt.key === "ArrowDown") {
+      evt.preventDefault();
+      highlight(Math.min(activeIndex + 1, currentOptions.length - 1));
+    } else if (evt.key === "ArrowUp") {
+      evt.preventDefault();
+      highlight(Math.max(activeIndex - 1, 0));
+    } else if (evt.key === "Enter" && activeIndex >= 0 && currentOptions[activeIndex] !== undefined) {
+      evt.preventDefault();
+      input.value = currentOptions[activeIndex];
+      hide();
+    } else if (evt.key === "Escape") {
+      hide();
+    }
+  });
+}
 
 // ---------- Matcher rows ----------
 
@@ -67,14 +163,18 @@ function createMatcherRow(prefillKey = "") {
   const row = document.createElement("div");
   row.className = "matcher-row";
   row.innerHTML = `
-    <input type="text" class="matcher-key" list="labelNamesList" placeholder="label (ej. namespace)" value="${escapeHtml(prefillKey)}" />
+    <div class="autocomplete-wrap">
+      <input type="text" class="matcher-key" placeholder="label (ej. namespace)" value="${escapeHtml(prefillKey)}" autocomplete="off" />
+    </div>
     <select class="matcher-op">
       <option value="=">=</option>
       <option value="!=">!=</option>
       <option value="=~">=~</option>
       <option value="!~">!~</option>
     </select>
-    <input type="text" class="matcher-value" placeholder="valor" />
+    <div class="autocomplete-wrap">
+      <input type="text" class="matcher-value" placeholder="valor" autocomplete="off" />
+    </div>
     <button type="button" class="remove-matcher" title="Eliminar">×</button>
   `;
 
@@ -89,50 +189,36 @@ function createMatcherRow(prefillKey = "") {
 
   const keyInput = row.querySelector(".matcher-key");
   const valueInput = row.querySelector(".matcher-value");
-  keyInput.addEventListener("change", () => attachValueAutocomplete(keyInput, valueInput));
+
+  createAutocomplete(keyInput, { getOptions: loadLabelNames });
+  // Reads keyInput.value at the moment the value field is used, so it
+  // always reflects whichever label name is currently typed — no stale
+  // binding if the user changes the label after picking a value once.
+  createAutocomplete(valueInput, { getOptions: () => loadLabelValues(keyInput.value.trim()) });
 
   el.matchers.appendChild(row);
   return row;
 }
 
-function ensureLabelNamesDatalist() {
-  if (document.getElementById("labelNamesList")) return;
-  const dl = document.createElement("datalist");
-  dl.id = "labelNamesList";
-  document.body.appendChild(dl);
-}
-
-async function attachValueAutocomplete(keyInput, valueInput) {
-  const name = keyInput.value.trim();
-  if (!name) return;
+async function loadLabelValues(name) {
+  if (!name) return [];
+  const orgId = el.orgIdInput.value.trim();
+  const cacheKey = `${orgId}::${name}`;
+  if (labelValuesCache.has(cacheKey)) {
+    return labelValuesCache.get(cacheKey);
+  }
   try {
-    const orgId = el.orgIdInput.value.trim();
     const qs = new URLSearchParams({ name });
     if (orgId) qs.set("orgId", orgId);
     const res = await fetch(`/api/label-values?${qs.toString()}`);
-    if (!res.ok) return;
+    if (!res.ok) return [];
     const data = await res.json();
-    const listId = `values-${cssSafeId(name)}`;
-    let dl = document.getElementById(listId);
-    if (!dl) {
-      dl = document.createElement("datalist");
-      dl.id = listId;
-      document.body.appendChild(dl);
-    }
-    dl.innerHTML = "";
-    (data.values || []).forEach((v) => {
-      const opt = document.createElement("option");
-      opt.value = v;
-      dl.appendChild(opt);
-    });
-    valueInput.setAttribute("list", listId);
+    const values = data.values || [];
+    labelValuesCache.set(cacheKey, values);
+    return values;
   } catch (_) {
-    // Autocomplete is a convenience only — silently ignore failures.
+    return [];
   }
-}
-
-function cssSafeId(s) {
-  return s.replace(/[^a-zA-Z0-9_-]/g, "_");
 }
 
 async function loadLabelNames() {
@@ -147,13 +233,6 @@ async function loadLabelNames() {
     const data = await res.json();
     const names = data.labels || [];
     labelNamesCacheByOrg.set(orgId, names);
-    const dl = document.getElementById("labelNamesList");
-    dl.innerHTML = "";
-    names.forEach((name) => {
-      const opt = document.createElement("option");
-      opt.value = name;
-      dl.appendChild(opt);
-    });
     return names;
   } catch (_) {
     return [];
@@ -507,6 +586,5 @@ el.downloadBtn.addEventListener("click", () => {
 
 // ---------- Init ----------
 
-ensureLabelNamesDatalist();
 createMatcherRow("namespace");
 loadDefaultOrgId().then(loadLabelNames);
