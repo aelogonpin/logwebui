@@ -111,6 +111,7 @@ function createAutocomplete(input, { getOptions }) {
       const item = document.createElement("div");
       item.className = "autocomplete-item";
       item.textContent = opt;
+      item.title = opt; // full name on hover — long values get cut off with an ellipsis
       // mousedown (not click) + preventDefault fires before the input's
       // blur, so selecting an option never gets swallowed by blur-hiding
       // the dropdown first.
