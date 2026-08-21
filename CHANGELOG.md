@@ -14,6 +14,9 @@ y este proyecto usa [Versionado Semántico](https://semver.org/lang/es/).
   usa para acotar el resultado a lo que realmente coexiste con los
   matchers ya rellenados en otras filas del buscador (ej. si filtras por
   `namespace="monitoring"`, el campo `pod` no sugiere pods de `logging`).
+- Ese mismo autocompletado ahora también se acota al rango de tiempo
+  seleccionado (como en el Explore de Grafana): si un pod murió a las
+  17:00 y buscas a partir de las 18:00, no aparece en las sugerencias.
 - Panel de búsqueda redimensionable arrastrando un separador entre el
   buscador y el visor (ancho persistido en `localStorage`).
 - Desplegable propio para el autocompletado de labels/valores en vez del

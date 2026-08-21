@@ -222,11 +222,35 @@ function buildContextSelector(excludeRow) {
   return parts.length > 0 ? `{${parts.join(", ")}}` : "";
 }
 
+// Like Grafana's Explore/log browser: label and value suggestions are
+// scoped to the currently selected time range, not just to other
+// matchers. If a pod died at 5pm and you're searching from 6pm onward,
+// it has no log lines in that window, so Loki won't list it — dead
+// pods/labels from outside the selected range simply don't show up.
+// Rounded to the minute so autocomplete calls made moments apart (e.g.
+// while typing) hit the cache instead of refetching on every keystroke.
+function currentDiscoveryTimeRange() {
+  try {
+    const range = resolveTimeRange();
+    const round = (iso) => {
+      const d = new Date(iso);
+      d.setSeconds(0, 0);
+      return d.toISOString();
+    };
+    return { start: round(range.start), end: round(range.end) };
+  } catch (_) {
+    // Custom mode with an incomplete range — let Loki fall back to its
+    // own default window rather than blocking autocomplete on it.
+    return { start: "", end: "" };
+  }
+}
+
 async function loadLabelValues(name, excludeRow) {
   if (!name) return [];
   const orgId = el.orgIdInput.value.trim();
   const contextQuery = buildContextSelector(excludeRow);
-  const cacheKey = `${orgId}::${contextQuery}::${name}`;
+  const { start, end } = currentDiscoveryTimeRange();
+  const cacheKey = `${orgId}::${contextQuery}::${start}::${end}::${name}`;
   if (labelValuesCache.has(cacheKey)) {
     return labelValuesCache.get(cacheKey);
   }
@@ -234,6 +258,8 @@ async function loadLabelValues(name, excludeRow) {
     const qs = new URLSearchParams({ name });
     if (orgId) qs.set("orgId", orgId);
     if (contextQuery) qs.set("query", contextQuery);
+    if (start) qs.set("start", start);
+    if (end) qs.set("end", end);
     const res = await fetch(`/api/label-values?${qs.toString()}`);
     if (!res.ok) return [];
     const data = await res.json();
@@ -248,7 +274,8 @@ async function loadLabelValues(name, excludeRow) {
 async function loadLabelNames(excludeRow) {
   const orgId = el.orgIdInput.value.trim();
   const contextQuery = buildContextSelector(excludeRow);
-  const cacheKey = `${orgId}::${contextQuery}`;
+  const { start, end } = currentDiscoveryTimeRange();
+  const cacheKey = `${orgId}::${contextQuery}::${start}::${end}`;
   if (labelNamesCacheByOrg.has(cacheKey)) {
     return labelNamesCacheByOrg.get(cacheKey);
   }
@@ -256,6 +283,8 @@ async function loadLabelNames(excludeRow) {
     const qs = new URLSearchParams();
     if (orgId) qs.set("orgId", orgId);
     if (contextQuery) qs.set("query", contextQuery);
+    if (start) qs.set("start", start);
+    if (end) qs.set("end", end);
     const res = await fetch(`/api/labels?${qs.toString()}`);
     if (!res.ok) return [];
     const data = await res.json();
