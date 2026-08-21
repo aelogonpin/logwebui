@@ -104,7 +104,18 @@
             Descarga <strong>todos</strong> los logs del selector actual, buscando
             su primera y última aparición dentro de la ventana indicada abajo.
             Puede tardar y generar un archivo grande — pensado solo para
-            descargar, no para previsualizar en el visor.
+            descargar, no para previsualizar en el visor. Mientras este
+            panel está abierto, el autocompletado de labels/valores busca
+            en esta misma ventana (no en las últimas 24h del buscador), así
+            que aquí sí verás pods antiguos que ya no están activos.
+          </p>
+          <p class="lifecycle-export-hint">
+            ¿El objeto se recrea a menudo (nuevo hash de pod en cada
+            despliegue)? Cambia el operador del label a <code>=~</code> y
+            usa un patrón que cubra todas sus incarnaciones (ej.
+            <code>comerzzia-admin-.*</code>) para descargar el historial
+            combinado de todas ellas en una sola exportación, en vez de
+            solo la del pod exacto que elijas.
           </p>
           <label class="field">
             <span>Buscar su ciclo de vida desde hace</span>

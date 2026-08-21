@@ -241,13 +241,27 @@ function buildContextSelector(excludeRow) {
 // Rounded to the minute so autocomplete calls made moments apart (e.g.
 // while typing) hit the cache instead of refetching on every keystroke.
 function currentDiscoveryTimeRange() {
+  const round = (iso) => {
+    const d = new Date(iso);
+    d.setSeconds(0, 0);
+    return d.toISOString();
+  };
+
+  // While configuring a full-lifecycle export, discovery should look
+  // back as far as THAT export will (e.g. 30 days) instead of the main
+  // search's time range (often just the last 24h). Otherwise a pod that
+  // was recreated a week ago under a new name (a new rollout gets a new
+  // ReplicaSet hash) never shows up as a suggestion, even though it's
+  // exactly the kind of past incarnation this feature exists to find.
+  if (!el.lifecycleExportPanel.hidden) {
+    const days = Number(el.lifecycleLookback.value) || 30;
+    const end = new Date();
+    const start = new Date(end.getTime() - days * 24 * 60 * 60 * 1000);
+    return { start: round(start.toISOString()), end: round(end.toISOString()) };
+  }
+
   try {
     const range = resolveTimeRange();
-    const round = (iso) => {
-      const d = new Date(iso);
-      d.setSeconds(0, 0);
-      return d.toISOString();
-    };
     return { start: round(range.start), end: round(range.end) };
   } catch (_) {
     // Custom mode with an incomplete range — let Loki fall back to its

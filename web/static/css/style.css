@@ -439,6 +439,16 @@ input::placeholder {
   margin: 0 0 12px;
 }
 
+.lifecycle-export-hint code {
+  font-family: var(--font-mono);
+  background: var(--bg-panel);
+  border: 1px solid var(--border-soft);
+  border-radius: 4px;
+  padding: 1px 4px;
+  font-size: 11px;
+  color: var(--text);
+}
+
 .lifecycle-progress {
   margin-top: 12px;
 }
