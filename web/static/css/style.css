@@ -29,6 +29,15 @@
   box-sizing: border-box;
 }
 
+/* Several components (empty/loading states, the custom range row) set an
+   explicit `display` on elements that are also toggled via the `hidden`
+   property from JS. Author CSS always wins over the browser's built-in
+   `[hidden] { display: none }` rule regardless of specificity, so without
+   this override those elements never actually hide. */
+[hidden] {
+  display: none !important;
+}
+
 html, body {
   height: 100%;
 }
