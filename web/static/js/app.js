@@ -50,6 +50,7 @@ const el = {
   searchError: document.getElementById("searchError"),
   resultCount: document.getElementById("resultCount"),
   terminal: document.getElementById("terminal"),
+  loadingState: document.getElementById("loadingState"),
   emptyState: document.getElementById("emptyState"),
   logLines: document.getElementById("logLines"),
   freeFilter: document.getElementById("freeFilter"),
@@ -259,6 +260,17 @@ function setLoading(isLoading) {
   el.searchBtn.disabled = isLoading;
   el.searchBtnLabel.textContent = isLoading ? "Buscando… (espera a que termine)" : "Buscar logs";
   setStatus(isLoading ? "loading" : "idle", isLoading ? "Consultando Loki…" : "Listo");
+
+  if (isLoading) {
+    // Hide whatever was previously shown (old results or the empty hint)
+    // and show a clear spinner so it's obvious the app is waiting on Loki,
+    // not stuck. Success/error handling restores the right view afterwards.
+    el.loadingState.hidden = false;
+    el.emptyState.hidden = true;
+    el.logLines.hidden = true;
+  } else {
+    el.loadingState.hidden = true;
+  }
 }
 
 function renderQueryMeta(meta) {
@@ -341,6 +353,14 @@ async function runSearch() {
     el.searchError.textContent = err.message || "No se pudo consultar Loki.";
     el.searchError.hidden = false;
     el.queryMeta.hidden = true;
+    // setLoading(true) hid whatever was on screen; since this search
+    // failed, state.entries is unchanged, so just re-sync the view to it
+    // (old results reappear, or the empty hint if there were none).
+    if (state.entries.length > 0) {
+      el.logLines.hidden = false;
+    } else {
+      el.emptyState.hidden = false;
+    }
   } finally {
     state.searching = false;
     setLoading(false);

@@ -442,6 +442,33 @@ input::placeholder {
   font-size: 13px;
 }
 
+.loading-state {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  padding: 40px;
+  text-align: center;
+  color: var(--text-dim);
+  font-family: var(--font-ui);
+  font-size: 13px;
+}
+
+.spinner {
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  border: 3px solid var(--border);
+  border-top-color: var(--accent);
+  animation: spin 0.7s linear infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
 .log-lines {
   padding: 4px 0;
 }
