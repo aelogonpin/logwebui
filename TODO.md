@@ -16,9 +16,12 @@ ni prioridad estricta salvo que se indique.
 
 - [ ] Streaming de resultados grandes (NDJSON o SSE) en vez de cargar todo
       el JSON en memoria antes de responder — útil para límites altos (5000+ líneas).
+      (El patrón SSE ya existe para `/api/export`; se podría reutilizar aquí.)
 - [ ] Endpoint para exportar a `.json` o `.csv` además de `.txt`.
 - [ ] Cache corta (TTL unos segundos) de `/api/labels` y `/api/label-values`
       para reducir carga sobre Loki en búsquedas repetidas.
+      (Hoy solo hay cache en el navegador — un `Map` en memoria del
+      frontend, sin TTL server-side.)
 - [ ] Soporte de paginación / "cargar más" en vez de un único `limit` fijo.
 - [ ] Reintentos con backoff ante errores transitorios de Loki (5xx, timeouts).
 - [ ] Métricas propias (Prometheus `/metrics`) de latencia y tasa de error
@@ -48,6 +51,13 @@ ni prioridad estricta salvo que se indique.
 
 ## Calidad
 
-- [ ] Tests de los handlers HTTP (`internal/api`) además de los del cliente Loki.
+- [x] Tests de los handlers HTTP para `/api/export`: paginación con
+      timestamps precisos vs. de resolución más gruesa (regresión del bug
+      de cursor atascado), y fallo limpio sin datos en la ventana —
+      `internal/api/export_test.go`.
+- [ ] Tests de los handlers HTTP restantes (`Query`, `Labels`,
+      `LabelValues`, `Config`) — de momento solo cubiertos indirectamente
+      vía los tests del cliente Loki.
 - [ ] Tests end-to-end del frontend (Playwright) cubriendo búsqueda,
-      filtros y descarga.
+      filtros y descarga — comprobado manualmente varias veces durante el
+      desarrollo, pero no hay una suite de Playwright versionada en el repo.
