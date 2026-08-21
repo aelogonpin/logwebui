@@ -48,6 +48,7 @@ const el = {
   endTime: document.getElementById("endTime"),
   queryMeta: document.getElementById("queryMeta"),
   limitSelect: document.getElementById("limitSelect"),
+  limitCustomInput: document.getElementById("limitCustomInput"),
   directionSelect: document.getElementById("directionSelect"),
   searchBtn: document.getElementById("searchBtn"),
   searchBtnLabel: document.getElementById("searchBtnLabel"),
@@ -60,6 +61,15 @@ const el = {
   freeFilter: document.getElementById("freeFilter"),
   downloadBtn: document.getElementById("downloadBtn"),
   connStatus: document.getElementById("connStatus"),
+  lifecycleExportToggle: document.getElementById("lifecycleExportToggle"),
+  lifecycleExportPanel: document.getElementById("lifecycleExportPanel"),
+  lifecycleLookback: document.getElementById("lifecycleLookback"),
+  lifecycleExportStart: document.getElementById("lifecycleExportStart"),
+  lifecycleProgress: document.getElementById("lifecycleProgress"),
+  lifecycleProgressFill: document.getElementById("lifecycleProgressFill"),
+  lifecycleProgressText: document.getElementById("lifecycleProgressText"),
+  lifecycleExportCancel: document.getElementById("lifecycleExportCancel"),
+  lifecycleExportError: document.getElementById("lifecycleExportError"),
 };
 
 const labelNamesCacheByOrg = new Map();
@@ -374,6 +384,31 @@ function resolveTimeRange() {
   };
 }
 
+// ---------- Line limit (preset or custom) ----------
+
+el.limitSelect.addEventListener("change", () => {
+  el.limitCustomInput.hidden = el.limitSelect.value !== "custom";
+  if (el.limitSelect.value === "custom") {
+    el.limitCustomInput.focus();
+  }
+});
+
+// Resolves the effective line limit, or throws with a user-facing message
+// if "Personalizado" is selected but left empty/invalid. No artificial
+// ceiling on the custom value here — Loki's own configured max decides
+// what's actually allowed, and a too-high value just comes back as a
+// normal error instead of us silently clamping it to a guess.
+function resolveLineLimit() {
+  if (el.limitSelect.value !== "custom") {
+    return Number(el.limitSelect.value);
+  }
+  const custom = Number(el.limitCustomInput.value);
+  if (!Number.isInteger(custom) || custom < 1) {
+    throw new Error("Indica un número de líneas válido (entero, mayor que 0) en el límite personalizado.");
+  }
+  return custom;
+}
+
 // ---------- Search ----------
 
 function collectMatchers() {
@@ -447,8 +482,10 @@ async function runSearch() {
   }
 
   let range;
+  let limit;
   try {
     range = resolveTimeRange();
+    limit = resolveLineLimit();
   } catch (err) {
     el.searchError.textContent = err.message;
     el.searchError.hidden = false;
@@ -457,7 +494,7 @@ async function runSearch() {
 
   const payload = {
     matchers,
-    limit: Number(el.limitSelect.value),
+    limit,
     direction: el.directionSelect.value,
     orgId: el.orgIdInput.value.trim(),
     start: range.start,
@@ -685,6 +722,114 @@ function initResizablePanel() {
   el.resizeHandle.addEventListener("pointerup", stopDragging);
   el.resizeHandle.addEventListener("pointercancel", stopDragging);
 }
+
+// ---------- Full lifecycle export ----------
+//
+// Downloads *everything* a stream selector has ever logged, from its
+// first known line to its last, by paging through /api/export (Server-
+// Sent Events) — not meant for on-screen preview, only for saving to
+// disk. Progress is the real fraction of the object's observed lifetime
+// (first log to last log) covered so far, computed server-side from the
+// actual timestamps being paged through — never an animated/fake guess.
+
+let lifecycleEventSource = null;
+
+el.lifecycleExportToggle.addEventListener("click", () => {
+  el.lifecycleExportPanel.hidden = !el.lifecycleExportPanel.hidden;
+});
+
+function resetLifecycleUI() {
+  el.lifecycleExportStart.disabled = false;
+  el.lifecycleProgress.hidden = true;
+  el.lifecycleProgressFill.style.width = "0%";
+}
+
+function stopLifecycleExport() {
+  if (lifecycleEventSource) {
+    lifecycleEventSource.close();
+    lifecycleEventSource = null;
+  }
+}
+
+el.lifecycleExportStart.addEventListener("click", () => {
+  const matchers = collectMatchers();
+  el.lifecycleExportError.hidden = true;
+
+  if (matchers.length === 0) {
+    el.lifecycleExportError.textContent = "Añade al menos un label con su valor.";
+    el.lifecycleExportError.hidden = false;
+    return;
+  }
+
+  stopLifecycleExport();
+
+  const qs = new URLSearchParams();
+  qs.set("matchers", JSON.stringify(matchers));
+  const orgId = el.orgIdInput.value.trim();
+  if (orgId) qs.set("orgId", orgId);
+  qs.set("lookbackDays", el.lifecycleLookback.value);
+
+  el.lifecycleExportStart.disabled = true;
+  el.lifecycleProgress.hidden = false;
+  el.lifecycleProgressFill.style.width = "0%";
+  el.lifecycleProgressText.textContent = "Buscando la primera y última aparición…";
+
+  lifecycleEventSource = new EventSource(`/api/export?${qs.toString()}`);
+
+  lifecycleEventSource.addEventListener("started", (evt) => {
+    const data = JSON.parse(evt.data);
+    el.lifecycleProgressText.textContent = `Encontrado: ${data.firstSeen} → ${data.lastSeen}. Descargando…`;
+  });
+
+  lifecycleEventSource.addEventListener("progress", (evt) => {
+    const data = JSON.parse(evt.data);
+    const pct = data.percent.toFixed(1);
+    el.lifecycleProgressFill.style.width = `${pct}%`;
+    el.lifecycleProgressText.textContent = `${pct}% — ${data.lines.toLocaleString("es-ES")} líneas descargadas`;
+  });
+
+  lifecycleEventSource.addEventListener("done", (evt) => {
+    const data = JSON.parse(evt.data);
+    el.lifecycleProgressFill.style.width = "100%";
+    el.lifecycleProgressText.textContent =
+      `Completado: ${data.lines.toLocaleString("es-ES")} líneas` +
+      (data.truncated ? " (cortado por el límite de seguridad — el objeto tiene aún más historial)" : "");
+    stopLifecycleExport();
+    el.lifecycleExportStart.disabled = false;
+    // A normal browser download, not a JS Blob — the file can be huge and
+    // this streams straight to disk instead of holding it all in memory.
+    window.location.href = `/api/export/download?id=${encodeURIComponent(data.downloadId)}`;
+  });
+
+  lifecycleEventSource.addEventListener("failed", (evt) => {
+    let message = "Error durante la exportación.";
+    try {
+      message = JSON.parse(evt.data).error || message;
+    } catch (_) {
+      // keep default message
+    }
+    el.lifecycleExportError.textContent = message;
+    el.lifecycleExportError.hidden = false;
+    stopLifecycleExport();
+    resetLifecycleUI();
+  });
+
+  lifecycleEventSource.onerror = () => {
+    // Fires on a genuine connection drop — "done"/"failed" already close
+    // the stream themselves before this would have a chance to matter.
+    if (!lifecycleEventSource) return;
+    el.lifecycleExportError.textContent = "Se perdió la conexión durante la exportación.";
+    el.lifecycleExportError.hidden = false;
+    stopLifecycleExport();
+    resetLifecycleUI();
+  };
+});
+
+el.lifecycleExportCancel.addEventListener("click", () => {
+  stopLifecycleExport();
+  el.lifecycleProgressText.textContent = "Cancelado.";
+  el.lifecycleExportStart.disabled = false;
+});
 
 // ---------- Init ----------
 

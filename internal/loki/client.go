@@ -21,10 +21,7 @@ import (
 	"time"
 )
 
-const (
-	defaultLimit = 1000
-	maxLimit     = 5000
-)
+const defaultLimit = 1000
 
 // Client talks to a single Loki instance.
 type Client struct {
@@ -92,8 +89,13 @@ func (c *Client) QueryRange(ctx context.Context, p QueryParams) ([]Entry, error)
 		return nil, err
 	}
 
+	// No artificial upper cap here: whatever the caller asks for is sent
+	// as-is, and Loki's own configured max_entries_limit_per_query decides
+	// what's actually allowed (surfaced to the user as a normal error if
+	// exceeded) rather than us guessing a ceiling that may not match
+	// their Loki's real configuration.
 	limit := p.Limit
-	if limit <= 0 || limit > maxLimit {
+	if limit <= 0 {
 		limit = defaultLimit
 	}
 

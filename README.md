@@ -136,8 +136,11 @@ docker run --rm -p 8080:8080 \
      incluye un momento anterior a su muerte.
 3. **Rango de tiempo**: chips rápidos (15m/1h/6h/24h/3d) o fechas
    personalizadas.
-4. **Límite y orden**: selecciona cuántas líneas traer y si quieres las
-   más recientes o las más antiguas primero.
+4. **Límite y orden**: selecciona cuántas líneas traer (100/500/1000/2000/5000)
+   o elige "Personalizado…" para indicar cualquier número — no hay un tope
+   artificial en la app; si pides más de lo que tu Loki permite en una
+   sola consulta, Loki devolverá su propio error, no un límite inventado
+   por nosotros.
 5. **Visor de logs**: panel tipo terminal con cada línea coloreada según
    la severidad detectada (`ERROR`, `WARN`, `INFO`, `DEBUG`/`TRACE`).
    Usa los chips (`Solo Errores`, `Solo Warnings`…) o el campo de texto
@@ -145,6 +148,21 @@ docker run --rm -p 8080:8080 \
 6. **Descarga**: el botón "Descargar .txt" genera un archivo de texto
    plano con las líneas actualmente visibles (respeta los filtros
    aplicados).
+7. **Ciclo de vida completo** ("⬇ Ciclo de vida completo", debajo del
+   botón de búsqueda): descarga *todos* los logs del selector actual,
+   desde su primera hasta su última aparición conocida — pensado para
+   volcar a disco el historial completo de un pod/objeto (puede ser
+   mucho volumen), no para previsualizarlo en el visor. Funciona así:
+   1. Elige cuántos días hacia atrás buscar su "nacimiento" (7/30/90/180 días).
+   2. La app localiza la primera y la última línea de log dentro de esa
+      ventana (su ciclo de vida observado) y va paginando por todo ese
+      rango en segundo plano.
+   3. La barra de progreso muestra un **porcentaje real**: la fracción
+      del rango de tiempo real del objeto ya recorrida, no una animación
+      simulada — se recalcula en cada página con las marcas de tiempo
+      reales devueltas por Loki.
+   4. Al terminar, el navegador descarga automáticamente el `.txt`
+      completo. Puedes cancelar en cualquier momento con "Cancelar".
 
 ## API interna
 
@@ -155,6 +173,8 @@ docker run --rm -p 8080:8080 \
 | `/api/labels?orgId=<org>&query=<selector>`   | GET | Label names conocidos por Loki para ese tenant, opcionalmente acotados a un selector LogQL |
 | `/api/label-values?name=<label>&orgId=<org>&query=<selector>` | GET | Valores conocidos para un label, opcionalmente acotados a un selector LogQL |
 | `/api/query`                       | POST   | Consulta logs (ver payload abajo)                             |
+| `/api/export?matchers=<json>&orgId=<org>&lookbackDays=<n>` | GET | Server-Sent Events: exporta el historial completo del selector (ver detalle abajo) |
+| `/api/export/download?id=<id>`     | GET    | Descarga (una sola vez) el archivo generado por `/api/export`  |
 
 Payload de `/api/query`:
 
@@ -175,6 +195,40 @@ Payload de `/api/query`:
 Si `orgId` se omite o va vacío, el backend usa `LOKI_ORG_ID` (si está
 definido) como fallback; si tampoco existe, no se envía cabecera
 `X-Scope-OrgID`.
+
+### `/api/export` (ciclo de vida completo)
+
+Es un endpoint GET porque `EventSource` (SSE) del navegador solo puede
+hacer GET. `matchers` va como JSON serializado en la propia query string:
+
+```
+GET /api/export?matchers=[{"key":"pod","op":"=","value":"worker-x"}]&orgId=Clarel-pro&lookbackDays=30
+```
+
+Eventos que emite (formato `event: <nombre>\ndata: <json>\n\n`):
+
+- `started` — `{ "query": "...", "firstSeen": "...", "lastSeen": "..." }`,
+  una vez localizada la primera/última aparición dentro de la ventana de
+  `lookbackDays`.
+- `progress` — `{ "percent": 42.7, "lines": 12345 }`, tras cada página
+  paginada. `percent` es la fracción real del rango de tiempo del objeto
+  ya cubierta (no una simulación).
+- `done` — `{ "downloadId": "...", "lines": N, "truncated": bool }`.
+  `truncated` es `true` solo si se alcanzó el límite de seguridad de 2M
+  líneas.
+- `failed` — `{ "error": "..." }` ante cualquier fallo (sin datos en la
+  ventana, error de Loki, etc.).
+
+`downloadId` se canjea una única vez en
+`GET /api/export/download?id=<id>`, que sirve el archivo y lo borra del
+disco justo después.
+
+**Nota de robustez**: la paginación avanza el cursor por nanosegundo tras
+cada página. Si la fuente de logs solo tiene precisión de segundo (o
+peor), el cursor puede quedarse "atascado" reobteniendo la última página
+para siempre — el backend detecta esto (misma página repetida) y corta
+la exportación de forma limpia en vez de bucle infinito o archivo lleno
+de líneas duplicadas.
 
 ## Documentación relacionada
 

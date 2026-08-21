@@ -20,6 +20,8 @@ func NewRouter(client *loki.Client, defaultLokiOrgID string, webFS fs.FS) http.H
 	mux.HandleFunc("/api/query", h.Query)
 	mux.HandleFunc("/api/labels", h.Labels)
 	mux.HandleFunc("/api/label-values", h.LabelValues)
+	mux.HandleFunc("/api/export", h.Export)
+	mux.HandleFunc("/api/export/download", h.ExportDownload)
 
 	mux.Handle("/", http.FileServer(http.FS(webFS)))
 

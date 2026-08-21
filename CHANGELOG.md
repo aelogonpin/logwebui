@@ -22,6 +22,17 @@ y este proyecto usa [Versionado Semántico](https://semver.org/lang/es/).
 - Desplegable propio para el autocompletado de labels/valores en vez del
   `<datalist>` nativo (poco fiable en Safari), y un botón para cancelar
   una búsqueda en curso.
+- Límite de líneas personalizado: además de los presets (100/500/1000/2000/5000),
+  una opción "Personalizado…" acepta cualquier número; ya no hay un tope
+  de 5000 inventado por la app — el límite real lo impone la propia
+  configuración de tu Loki.
+- Exportación del ciclo de vida completo de un objeto (`⬇ Ciclo de vida
+  completo`): descarga *todos* los logs del selector actual desde su
+  primera hasta su última aparición conocida, con progreso real vía
+  Server-Sent Events (`/api/export` + `/api/export/download`) — pensado
+  solo para descargar, no para previsualizar. El progreso mostrado es la
+  fracción real del rango de tiempo del objeto ya recorrida, no una
+  animación simulada.
 
 ### Cambiado
 
@@ -38,6 +49,12 @@ y este proyecto usa [Versionado Semántico](https://semver.org/lang/es/).
   personalizadas, el separador de redimensionado) no se ocultaban nunca
   realmente por un conflicto de CSS entre el atributo `hidden` y reglas
   `display` propias de cada componente.
+- Paginación de `/api/export`: avanzar el cursor por nanosegundo entre
+  páginas podía quedarse atascado repitiendo la última página para
+  siempre contra una fuente de logs con precisión de timestamp más
+  gruesa que el nanosegundo (segundo, milisegundo…). Ahora se detecta la
+  página repetida y se corta la exportación de forma limpia. Cubierto
+  con tests de regresión (`internal/api/export_test.go`).
 
 ## [1.0.0] - 2026-08-21
 

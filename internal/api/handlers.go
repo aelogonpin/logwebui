@@ -19,6 +19,7 @@ const (
 type Handlers struct {
 	loki             *loki.Client
 	defaultLokiOrgID string
+	exports          *exportStore
 }
 
 // NewHandlers builds a Handlers bound to the given Loki client.
@@ -26,7 +27,7 @@ type Handlers struct {
 // /api/config so the frontend can pre-fill the Org ID field; it is never
 // enforced server-side.
 func NewHandlers(c *loki.Client, defaultLokiOrgID string) *Handlers {
-	return &Handlers{loki: c, defaultLokiOrgID: defaultLokiOrgID}
+	return &Handlers{loki: c, defaultLokiOrgID: defaultLokiOrgID, exports: newExportStore()}
 }
 
 type queryRequest struct {
