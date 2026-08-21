@@ -129,8 +129,8 @@ body {
 .layout {
   flex: 1;
   display: grid;
-  grid-template-columns: var(--search-panel-w, 340px) 1fr;
-  gap: 16px;
+  grid-template-columns: var(--search-panel-w, 340px) 14px 1fr;
+  column-gap: 10px;
   padding: 16px;
   min-height: 0;
 }
@@ -146,30 +146,38 @@ body {
 }
 
 .search-panel {
-  position: relative; /* anchors the resize handle */
   overflow-y: auto;
 }
 
 .resize-handle {
-  position: absolute;
-  top: 0;
-  bottom: 0;
-  right: -16px;
-  width: 16px;
+  /* A real grid column (not an absolutely-positioned overlay): the old
+     approach placed it outside search-panel's box via a negative offset,
+     but search-panel has overflow-y:auto, which per the CSS overflow spec
+     forces overflow-x to also clip — so the handle was being cut off
+     entirely and was neither visible nor clickable. As its own grid
+     track it can't be clipped by a sibling's overflow, and its full
+     14px width (not a thin 3px line) is the actual drag target. */
   cursor: col-resize;
   z-index: 10;
   display: flex;
   align-items: center;
   justify-content: center;
   touch-action: none;
+  border-radius: var(--radius-sm);
+  transition: background 0.15s ease;
+}
+
+.resize-handle:hover,
+body.resizing-panel .resize-handle {
+  background: var(--bg-elevated);
 }
 
 .resize-handle::after {
   content: "";
-  width: 3px;
+  width: 4px;
   height: 44px;
-  border-radius: 3px;
-  background: var(--border);
+  border-radius: 4px;
+  background: var(--text-faint);
   transition: background 0.15s ease;
 }
 
