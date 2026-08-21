@@ -61,7 +61,8 @@ const el = {
   freeFilter: document.getElementById("freeFilter"),
   downloadBtn: document.getElementById("downloadBtn"),
   connStatus: document.getElementById("connStatus"),
-  searchControls: document.getElementById("searchControls"),
+  timeRangeControls: document.getElementById("timeRangeControls"),
+  limitControls: document.getElementById("limitControls"),
   lifecycleExportToggle: document.getElementById("lifecycleExportToggle"),
   lifecycleExportPanel: document.getElementById("lifecycleExportPanel"),
   lifecycleLookback: document.getElementById("lifecycleLookback"),
@@ -756,7 +757,8 @@ let lifecycleEventSource = null;
 // still affect the export, so they're visually dimmed and made
 // non-interactive for as long as the panel stays open.
 function setSearchControlsLocked(locked) {
-  el.searchControls.classList.toggle("locked", locked);
+  el.timeRangeControls.classList.toggle("locked", locked);
+  el.limitControls.classList.toggle("locked", locked);
   const controls = [
     ...el.timeModeToggle.querySelectorAll(".mode-btn"),
     ...el.quickRange.querySelectorAll(".chip"),

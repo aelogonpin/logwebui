@@ -200,11 +200,31 @@ body.resizing-panel {
 }
 
 .panel-subtitle {
-  font-size: 12px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11.5px;
+  font-weight: 700;
   text-transform: uppercase;
-  letter-spacing: 0.05em;
+  letter-spacing: 0.07em;
   color: var(--text-faint);
-  margin: 0 0 8px;
+  margin: 0 0 10px;
+}
+
+.subtitle-icon {
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+  color: var(--accent);
+  opacity: 0.85;
+}
+
+.btn-icon {
+  width: 15px;
+  height: 15px;
+  flex-shrink: 0;
+  vertical-align: -3px;
+  margin-right: 2px;
 }
 
 .divider {
