@@ -61,6 +61,7 @@ const el = {
   freeFilter: document.getElementById("freeFilter"),
   downloadBtn: document.getElementById("downloadBtn"),
   connStatus: document.getElementById("connStatus"),
+  searchControls: document.getElementById("searchControls"),
   lifecycleExportToggle: document.getElementById("lifecycleExportToggle"),
   lifecycleExportPanel: document.getElementById("lifecycleExportPanel"),
   lifecycleLookback: document.getElementById("lifecycleLookback"),
@@ -734,8 +735,38 @@ function initResizablePanel() {
 
 let lifecycleEventSource = null;
 
+// The lifecycle export only ever uses the current matchers/Org ID — it
+// ignores the time range, line limit and direction entirely (it always
+// fetches everything, from first log to last). Leaving those controls
+// looking active while this panel is open would wrongly suggest they
+// still affect the export, so they're visually dimmed and made
+// non-interactive for as long as the panel stays open.
+function setSearchControlsLocked(locked) {
+  el.searchControls.classList.toggle("locked", locked);
+  const controls = [
+    ...el.timeModeToggle.querySelectorAll(".mode-btn"),
+    ...el.quickRange.querySelectorAll(".chip"),
+    el.startTime,
+    el.endTime,
+    el.limitSelect,
+    el.limitCustomInput,
+    el.directionSelect,
+  ];
+  controls.forEach((control) => {
+    control.disabled = locked;
+  });
+  // Never disable the search button while it's actively showing "Cancelar
+  // búsqueda" — the user must always be able to stop a search that's
+  // already in flight, even with the lifecycle panel open.
+  if (!state.searching) {
+    el.searchBtn.disabled = locked;
+  }
+}
+
 el.lifecycleExportToggle.addEventListener("click", () => {
-  el.lifecycleExportPanel.hidden = !el.lifecycleExportPanel.hidden;
+  const willBeOpen = el.lifecycleExportPanel.hidden;
+  el.lifecycleExportPanel.hidden = !willBeOpen;
+  setSearchControlsLocked(willBeOpen);
 });
 
 function resetLifecycleUI() {

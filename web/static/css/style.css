@@ -401,6 +401,27 @@ input::placeholder {
   margin-bottom: 10px;
 }
 
+/* Search controls lock (while the lifecycle export panel is open — that
+   export ignores the time range/limit/direction entirely, so leaving
+   them looking active would suggest they still matter) */
+
+.search-controls.locked {
+  opacity: 0.45;
+  pointer-events: none;
+  user-select: none;
+  filter: grayscale(40%);
+  transition: opacity 0.15s ease, filter 0.15s ease;
+}
+
+/* If a search was already running when the lifecycle panel gets opened,
+   its Cancel button (shown via .btn-danger while searching) stays fully
+   usable — the user must always be able to stop an in-flight search. */
+.search-controls.locked #searchBtn.btn-danger {
+  opacity: 1;
+  pointer-events: auto;
+  filter: none;
+}
+
 /* Lifecycle export */
 
 .lifecycle-export-panel {

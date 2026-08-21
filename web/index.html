@@ -40,59 +40,61 @@
 
         <div class="divider"></div>
 
-        <h3 class="panel-subtitle">Rango de tiempo</h3>
-        <div class="mode-toggle" id="timeModeToggle">
-          <button type="button" class="mode-btn active" data-mode="quick">Rápido</button>
-          <button type="button" class="mode-btn" data-mode="custom">Personalizado</button>
+        <div class="search-controls" id="searchControls">
+          <h3 class="panel-subtitle">Rango de tiempo</h3>
+          <div class="mode-toggle" id="timeModeToggle">
+            <button type="button" class="mode-btn active" data-mode="quick">Rápido</button>
+            <button type="button" class="mode-btn" data-mode="custom">Personalizado</button>
+          </div>
+
+          <div class="quick-range" id="quickRange">
+            <button type="button" class="chip" data-minutes="15">15m</button>
+            <button type="button" class="chip" data-minutes="60">1h</button>
+            <button type="button" class="chip" data-minutes="360">6h</button>
+            <button type="button" class="chip active" data-minutes="1440">24h</button>
+            <button type="button" class="chip" data-minutes="4320">3d</button>
+          </div>
+
+          <div class="field-row" id="customRangeRow" hidden>
+            <label class="field">
+              <span>Desde</span>
+              <input type="datetime-local" id="startTime" />
+            </label>
+            <label class="field">
+              <span>Hasta</span>
+              <input type="datetime-local" id="endTime" />
+            </label>
+          </div>
+
+          <div class="divider"></div>
+
+          <div class="field-row">
+            <label class="field">
+              <span>Límite de líneas</span>
+              <select id="limitSelect">
+                <option value="100">100</option>
+                <option value="500">500</option>
+                <option value="1000" selected>1000</option>
+                <option value="2000">2000</option>
+                <option value="5000">5000</option>
+                <option value="custom">Personalizado…</option>
+              </select>
+            </label>
+            <label class="field">
+              <span>Orden</span>
+              <select id="directionSelect">
+                <option value="backward" selected>Más recientes primero</option>
+                <option value="forward">Más antiguos primero</option>
+              </select>
+            </label>
+          </div>
+          <input type="number" id="limitCustomInput" class="limit-custom-input" min="1" step="1" placeholder="Nº de líneas (ej. 15000)" hidden />
+
+          <button type="button" class="btn btn-primary btn-block" id="searchBtn">
+            <span id="searchBtnLabel">Buscar logs</span>
+          </button>
+          <p class="error-text" id="searchError" hidden></p>
         </div>
-
-        <div class="quick-range" id="quickRange">
-          <button type="button" class="chip" data-minutes="15">15m</button>
-          <button type="button" class="chip" data-minutes="60">1h</button>
-          <button type="button" class="chip" data-minutes="360">6h</button>
-          <button type="button" class="chip active" data-minutes="1440">24h</button>
-          <button type="button" class="chip" data-minutes="4320">3d</button>
-        </div>
-
-        <div class="field-row" id="customRangeRow" hidden>
-          <label class="field">
-            <span>Desde</span>
-            <input type="datetime-local" id="startTime" />
-          </label>
-          <label class="field">
-            <span>Hasta</span>
-            <input type="datetime-local" id="endTime" />
-          </label>
-        </div>
-
-        <div class="divider"></div>
-
-        <div class="field-row">
-          <label class="field">
-            <span>Límite de líneas</span>
-            <select id="limitSelect">
-              <option value="100">100</option>
-              <option value="500">500</option>
-              <option value="1000" selected>1000</option>
-              <option value="2000">2000</option>
-              <option value="5000">5000</option>
-              <option value="custom">Personalizado…</option>
-            </select>
-          </label>
-          <label class="field">
-            <span>Orden</span>
-            <select id="directionSelect">
-              <option value="backward" selected>Más recientes primero</option>
-              <option value="forward">Más antiguos primero</option>
-            </select>
-          </label>
-        </div>
-        <input type="number" id="limitCustomInput" class="limit-custom-input" min="1" step="1" placeholder="Nº de líneas (ej. 15000)" hidden />
-
-        <button type="button" class="btn btn-primary btn-block" id="searchBtn">
-          <span id="searchBtnLabel">Buscar logs</span>
-        </button>
-        <p class="error-text" id="searchError" hidden></p>
 
         <div class="divider"></div>
 
