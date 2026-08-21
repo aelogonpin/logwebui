@@ -750,6 +750,32 @@ function initResizablePanel() {
 // actual timestamps being paged through — never an animated/fake guess.
 
 let lifecycleEventSource = null;
+let lifecycleStartedAt = null;
+
+// Linear ETA from real, measured progress: elapsed wall-clock time so far
+// divided by the (real, server-computed) fraction complete, minus what's
+// already elapsed. Not an animation or a guess — it's derived entirely
+// from how long this specific export has actually taken so far, so it
+// naturally adjusts if Loki speeds up or slows down. Skipped below ~2%
+// progress since dividing by a near-zero fraction produces a wildly
+// unstable estimate that's more misleading than useful.
+function formatDuration(ms) {
+  const totalSeconds = Math.max(Math.round(ms / 1000), 0);
+  const h = Math.floor(totalSeconds / 3600);
+  const m = Math.floor((totalSeconds % 3600) / 60);
+  const s = totalSeconds % 60;
+  if (h > 0) return `${h}h ${m}m`;
+  if (m > 0) return `${m}m ${s}s`;
+  return `${s}s`;
+}
+
+function estimateRemaining(percent) {
+  if (!lifecycleStartedAt || percent < 2) return "";
+  const elapsedMs = Date.now() - lifecycleStartedAt;
+  const totalEstimatedMs = elapsedMs / (percent / 100);
+  const remainingMs = totalEstimatedMs - elapsedMs;
+  return ` · ~${formatDuration(remainingMs)} restantes (estimado)`;
+}
 
 // The lifecycle export only ever uses the current matchers/Org ID — it
 // ignores the time range, line limit and direction entirely (it always
@@ -797,6 +823,7 @@ function stopLifecycleExport() {
     lifecycleEventSource.close();
     lifecycleEventSource = null;
   }
+  lifecycleStartedAt = null;
 }
 
 el.lifecycleExportStart.addEventListener("click", () => {
@@ -821,6 +848,7 @@ el.lifecycleExportStart.addEventListener("click", () => {
   el.lifecycleProgress.hidden = false;
   el.lifecycleProgressFill.style.width = "0%";
   el.lifecycleProgressText.textContent = "Buscando la primera y última aparición…";
+  lifecycleStartedAt = Date.now();
 
   lifecycleEventSource = new EventSource(`/api/export?${qs.toString()}`);
 
@@ -833,7 +861,8 @@ el.lifecycleExportStart.addEventListener("click", () => {
     const data = JSON.parse(evt.data);
     const pct = data.percent.toFixed(1);
     el.lifecycleProgressFill.style.width = `${pct}%`;
-    el.lifecycleProgressText.textContent = `${pct}% — ${data.lines.toLocaleString("es-ES")} líneas descargadas`;
+    el.lifecycleProgressText.textContent =
+      `${pct}% — ${data.lines.toLocaleString("es-ES")} líneas descargadas` + estimateRemaining(data.percent);
   });
 
   lifecycleEventSource.addEventListener("done", (evt) => {
