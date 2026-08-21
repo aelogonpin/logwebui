@@ -35,6 +35,9 @@ function detectSeverity(line) {
 // ---------- DOM refs ----------
 
 const el = {
+  layout: document.getElementById("layout"),
+  searchPanel: document.getElementById("searchPanel"),
+  resizeHandle: document.getElementById("resizeHandle"),
   orgIdInput: document.getElementById("orgIdInput"),
   matchers: document.getElementById("matchers"),
   addMatcher: document.getElementById("addMatcher"),
@@ -584,7 +587,53 @@ el.downloadBtn.addEventListener("click", () => {
   URL.revokeObjectURL(url);
 });
 
+// ---------- Resizable search panel ----------
+//
+// Uses Pointer Events (not separate mouse/touch listeners) so dragging
+// works the same with a mouse, trackpad, or a finger on a touch screen.
+// The chosen width is clamped and persisted so it survives a reload.
+
+const PANEL_WIDTH_KEY = "lokiviews.searchPanelWidth";
+const PANEL_MIN_WIDTH = 260;
+const PANEL_MAX_WIDTH = 640;
+
+function applyPanelWidth(px) {
+  const clamped = Math.min(PANEL_MAX_WIDTH, Math.max(PANEL_MIN_WIDTH, px));
+  el.layout.style.setProperty("--search-panel-w", `${clamped}px`);
+  return clamped;
+}
+
+function initResizablePanel() {
+  const saved = Number(localStorage.getItem(PANEL_WIDTH_KEY));
+  if (saved) applyPanelWidth(saved);
+
+  let dragging = false;
+
+  el.resizeHandle.addEventListener("pointerdown", (evt) => {
+    dragging = true;
+    el.resizeHandle.setPointerCapture(evt.pointerId);
+    document.body.classList.add("resizing-panel");
+  });
+
+  el.resizeHandle.addEventListener("pointermove", (evt) => {
+    if (!dragging) return;
+    const rect = el.searchPanel.getBoundingClientRect();
+    applyPanelWidth(evt.clientX - rect.left);
+  });
+
+  const stopDragging = () => {
+    if (!dragging) return;
+    dragging = false;
+    document.body.classList.remove("resizing-panel");
+    const width = el.searchPanel.getBoundingClientRect().width;
+    localStorage.setItem(PANEL_WIDTH_KEY, String(Math.round(width)));
+  };
+  el.resizeHandle.addEventListener("pointerup", stopDragging);
+  el.resizeHandle.addEventListener("pointercancel", stopDragging);
+}
+
 // ---------- Init ----------
 
 createMatcherRow("namespace");
 loadDefaultOrgId().then(loadLabelNames);
+initResizablePanel();
