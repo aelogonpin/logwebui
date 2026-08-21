@@ -332,6 +332,34 @@ input::placeholder {
   flex-wrap: wrap;
 }
 
+.mode-toggle {
+  display: flex;
+  gap: 4px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 3px;
+  margin-bottom: 10px;
+  width: fit-content;
+}
+
+.mode-btn {
+  background: transparent;
+  border: none;
+  color: var(--text-dim);
+  font-family: inherit;
+  font-weight: 600;
+  font-size: 12px;
+  padding: 5px 14px;
+  border-radius: 999px;
+  cursor: pointer;
+}
+
+.mode-btn.active {
+  background: var(--accent);
+  color: #fff;
+}
+
 .sev-chip.sev-error.active { background: var(--danger-bg); border-color: var(--danger); color: var(--danger); }
 .sev-chip.sev-warn.active { background: var(--warn-bg); border-color: var(--warn); color: var(--warn); }
 .sev-chip.sev-info.active { background: var(--info-bg); border-color: var(--info); color: var(--info); }
@@ -373,6 +401,23 @@ input::placeholder {
 
 .text-filter {
   width: 200px;
+}
+
+.query-meta {
+  margin: 0 0 10px;
+  padding: 6px 10px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-sm);
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  color: var(--text-dim);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.query-meta .meta-empty {
+  color: var(--warn);
 }
 
 .terminal {

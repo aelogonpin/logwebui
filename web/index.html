@@ -41,6 +41,11 @@
         <div class="divider"></div>
 
         <h3 class="panel-subtitle">Rango de tiempo</h3>
+        <div class="mode-toggle" id="timeModeToggle">
+          <button type="button" class="mode-btn active" data-mode="quick">Rápido</button>
+          <button type="button" class="mode-btn" data-mode="custom">Personalizado</button>
+        </div>
+
         <div class="quick-range" id="quickRange">
           <button type="button" class="chip" data-minutes="15">15m</button>
           <button type="button" class="chip" data-minutes="60">1h</button>
@@ -48,7 +53,8 @@
           <button type="button" class="chip active" data-minutes="1440">24h</button>
           <button type="button" class="chip" data-minutes="4320">3d</button>
         </div>
-        <div class="field-row">
+
+        <div class="field-row" id="customRangeRow" hidden>
           <label class="field">
             <span>Desde</span>
             <input type="datetime-local" id="startTime" />
@@ -104,6 +110,8 @@
             <button type="button" class="btn btn-accent btn-sm" id="downloadBtn" disabled>⬇ Descargar .txt</button>
           </div>
         </div>
+
+        <p class="query-meta" id="queryMeta" hidden></p>
 
         <div class="terminal" id="terminal">
           <div class="empty-state" id="emptyState">

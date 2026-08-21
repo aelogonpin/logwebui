@@ -12,6 +12,9 @@ const state = {
   entries: [], // [{ timestamp, line, labels, level }]
   severityFilter: "all",
   textFilter: "",
+  searching: false,
+  timeMode: "quick", // "quick" | "custom" — mutually exclusive, never both
+  quickMinutes: 1440,
 };
 
 const SEVERITY_PATTERNS = [
@@ -34,9 +37,12 @@ const el = {
   orgIdInput: document.getElementById("orgIdInput"),
   matchers: document.getElementById("matchers"),
   addMatcher: document.getElementById("addMatcher"),
+  timeModeToggle: document.getElementById("timeModeToggle"),
   quickRange: document.getElementById("quickRange"),
+  customRangeRow: document.getElementById("customRangeRow"),
   startTime: document.getElementById("startTime"),
   endTime: document.getElementById("endTime"),
+  queryMeta: document.getElementById("queryMeta"),
   limitSelect: document.getElementById("limitSelect"),
   directionSelect: document.getElementById("directionSelect"),
   searchBtn: document.getElementById("searchBtn"),
@@ -170,33 +176,65 @@ el.orgIdInput.addEventListener("change", () => {
 });
 
 // ---------- Time range ----------
+//
+// Quick range and custom dates are mutually exclusive: only one mode is
+// active at a time, both in the UI and in what gets sent to the backend.
+// Quick range is recomputed from "now" at search time, not frozen when the
+// chip was clicked, so "últimas 24h" always means the 24h up to the click.
 
 function toLocalInputValue(date) {
   const pad = (n) => String(n).padStart(2, "0");
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
 }
 
-function applyQuickRange(minutes) {
-  const end = new Date();
-  const start = new Date(end.getTime() - minutes * 60 * 1000);
-  el.startTime.value = toLocalInputValue(start);
-  el.endTime.value = toLocalInputValue(end);
+function setTimeMode(mode) {
+  state.timeMode = mode;
+  [...el.timeModeToggle.children].forEach((btn) => {
+    btn.classList.toggle("active", btn.dataset.mode === mode);
+  });
+  el.quickRange.hidden = mode !== "quick";
+  el.customRangeRow.hidden = mode !== "custom";
+
+  if (mode === "custom" && !el.startTime.value && !el.endTime.value) {
+    // Seed the custom fields with the currently selected quick range so
+    // switching modes doesn't present an empty, ambiguous range.
+    const end = new Date();
+    const start = new Date(end.getTime() - state.quickMinutes * 60 * 1000);
+    el.startTime.value = toLocalInputValue(start);
+    el.endTime.value = toLocalInputValue(end);
+  }
 }
+
+el.timeModeToggle.addEventListener("click", (evt) => {
+  const btn = evt.target.closest(".mode-btn");
+  if (!btn) return;
+  setTimeMode(btn.dataset.mode);
+});
 
 el.quickRange.addEventListener("click", (evt) => {
   const btn = evt.target.closest(".chip");
   if (!btn) return;
   [...el.quickRange.children].forEach((c) => c.classList.remove("active"));
   btn.classList.add("active");
-  applyQuickRange(Number(btn.dataset.minutes));
+  state.quickMinutes = Number(btn.dataset.minutes);
 });
 
-// Manually editing the range deselects the quick-range chips.
-[el.startTime, el.endTime].forEach((input) => {
-  input.addEventListener("input", () => {
-    [...el.quickRange.children].forEach((c) => c.classList.remove("active"));
-  });
-});
+// Resolves the effective start/end for the search about to run, or throws
+// with a user-facing message if the custom range is incomplete.
+function resolveTimeRange() {
+  if (state.timeMode === "quick") {
+    const end = new Date();
+    const start = new Date(end.getTime() - state.quickMinutes * 60 * 1000);
+    return { start: start.toISOString(), end: end.toISOString() };
+  }
+  if (!el.startTime.value || !el.endTime.value) {
+    throw new Error("En modo Personalizado, rellena tanto 'Desde' como 'Hasta'.");
+  }
+  return {
+    start: new Date(el.startTime.value).toISOString(),
+    end: new Date(el.endTime.value).toISOString(),
+  };
+}
 
 // ---------- Search ----------
 
@@ -219,11 +257,32 @@ function setStatus(mode, text) {
 
 function setLoading(isLoading) {
   el.searchBtn.disabled = isLoading;
-  el.searchBtnLabel.textContent = isLoading ? "Buscando…" : "Buscar logs";
+  el.searchBtnLabel.textContent = isLoading ? "Buscando… (espera a que termine)" : "Buscar logs";
   setStatus(isLoading ? "loading" : "idle", isLoading ? "Consultando Loki…" : "Listo");
 }
 
+function renderQueryMeta(meta) {
+  if (!meta) {
+    el.queryMeta.hidden = true;
+    return;
+  }
+  const emptyNote = meta.count === 0
+    ? `<span class="meta-empty">⚠ 0 resultados — revisa Org ID, labels o rango.</span>\n`
+    : "";
+  el.queryMeta.innerHTML =
+    `${emptyNote}query: ${escapeHtml(meta.query || "(sin selector)")}\n` +
+    `orgId: ${escapeHtml(meta.orgId || "(vacío — sin cabecera X-Scope-OrgID)")}\n` +
+    `rango: ${escapeHtml(meta.start || "?")} → ${escapeHtml(meta.end || "?")}`;
+  el.queryMeta.hidden = false;
+}
+
 async function runSearch() {
+  // Hard guard against overlapping searches: a second click while one is
+  // still in flight is a no-op, so we never fire concurrent requests at
+  // Loki (the button is also disabled, but this covers e.g. Enter-key
+  // double submits or race conditions).
+  if (state.searching) return;
+
   const matchers = collectMatchers();
   el.searchError.hidden = true;
 
@@ -233,15 +292,25 @@ async function runSearch() {
     return;
   }
 
+  let range;
+  try {
+    range = resolveTimeRange();
+  } catch (err) {
+    el.searchError.textContent = err.message;
+    el.searchError.hidden = false;
+    return;
+  }
+
   const payload = {
     matchers,
     limit: Number(el.limitSelect.value),
     direction: el.directionSelect.value,
     orgId: el.orgIdInput.value.trim(),
+    start: range.start,
+    end: range.end,
   };
-  if (el.startTime.value) payload.start = new Date(el.startTime.value).toISOString();
-  if (el.endTime.value) payload.end = new Date(el.endTime.value).toISOString();
 
+  state.searching = true;
   setLoading(true);
   try {
     const res = await fetch("/api/query", {
@@ -259,12 +328,21 @@ async function runSearch() {
       level: detectSeverity(e.line),
     }));
     setStatus("ok", `${state.entries.length} líneas`);
+    renderQueryMeta({
+      query: data.query,
+      orgId: data.orgId,
+      start: data.start,
+      end: data.end,
+      count: data.count,
+    });
     renderLogs();
   } catch (err) {
     setStatus("error", "Error de consulta");
     el.searchError.textContent = err.message || "No se pudo consultar Loki.";
     el.searchError.hidden = false;
+    el.queryMeta.hidden = true;
   } finally {
+    state.searching = false;
     setLoading(false);
   }
 }
@@ -392,5 +470,4 @@ el.downloadBtn.addEventListener("click", () => {
 
 ensureLabelNamesDatalist();
 createMatcherRow("namespace");
-applyQuickRange(1440);
 loadDefaultOrgId().then(loadLabelNames);

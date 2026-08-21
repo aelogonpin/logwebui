@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"log"
 	"net/http"
 	"time"
 
@@ -51,6 +52,20 @@ func (h *Handlers) Query(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Built up front (before calling Loki) so it's available both for the
+	// diagnostic response fields and for the log line below, and so a bad
+	// matcher set fails fast with a clear 400 instead of a generic 502.
+	selector, err := loki.BuildSelector(req.Matchers)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	effectiveOrgID := req.OrgID
+	if effectiveOrgID == "" {
+		effectiveOrgID = h.defaultLokiOrgID
+	}
+
 	ctx, cancel := context.WithTimeout(r.Context(), queryTimeout)
 	defer cancel()
 
@@ -63,13 +78,20 @@ func (h *Handlers) Query(w http.ResponseWriter, r *http.Request) {
 		OrgID:     req.OrgID,
 	})
 	if err != nil {
+		log.Printf("query failed: selector=%s orgId=%s start=%s end=%s: %v", selector, effectiveOrgID, req.Start, req.End, err)
 		writeError(w, http.StatusBadGateway, err.Error())
 		return
 	}
 
+	log.Printf("query ok: selector=%s orgId=%s start=%s end=%s -> %d entries", selector, effectiveOrgID, req.Start, req.End, len(entries))
+
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"count":   len(entries),
 		"entries": entries,
+		"query":   selector,
+		"orgId":   effectiveOrgID,
+		"start":   req.Start,
+		"end":     req.End,
 	})
 }
 
