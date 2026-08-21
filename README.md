@@ -123,7 +123,13 @@ docker run --rm -p 8080:8080 \
 2. **Buscador**: añade uno o varios labels (`namespace`, `pod`,
    `service_name`, cualquier label que exponga tu Loki) con su operador
    (`=`, `!=`, `=~`, `!~`) y valor. Los campos ofrecen autocompletado
-   consultando `/api/labels` y `/api/label-values` (usando el Org ID actual).
+   consultando `/api/labels` y `/api/label-values` (usando el Org ID
+   actual), y las sugerencias están **contextualizadas**: en cuanto
+   rellenas un label (ej. `namespace="monitoring"`), el resto de campos
+   solo sugieren labels/valores que realmente coexisten con ese selector
+   en Loki — no toda la lista del tenant. Por ejemplo, si filtras por
+   `namespace=monitoring`, el campo `pod` no te ofrecerá pods de otro
+   namespace como `logging`.
 3. **Rango de tiempo**: chips rápidos (15m/1h/6h/24h/3d) o fechas
    personalizadas.
 4. **Límite y orden**: selecciona cuántas líneas traer y si quieres las
@@ -142,8 +148,8 @@ docker run --rm -p 8080:8080 \
 |------------------------------------|:------:|-------------------------------------------------------------|
 | `/api/health`                      | GET    | Liveness check                                               |
 | `/api/config`                      | GET    | Config no sensible expuesta al frontend (`defaultOrgId`)      |
-| `/api/labels?orgId=<org>`          | GET    | Lista de label names conocidos por Loki para ese tenant        |
-| `/api/label-values?name=<label>&orgId=<org>` | GET | Valores conocidos para un label en ese tenant         |
+| `/api/labels?orgId=<org>&query=<selector>`   | GET | Label names conocidos por Loki para ese tenant, opcionalmente acotados a un selector LogQL |
+| `/api/label-values?name=<label>&orgId=<org>&query=<selector>` | GET | Valores conocidos para un label, opcionalmente acotados a un selector LogQL |
 | `/api/query`                       | POST   | Consulta logs (ver payload abajo)                             |
 
 Payload de `/api/query`:

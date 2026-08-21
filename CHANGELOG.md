@@ -7,6 +7,19 @@ y este proyecto usa [Versionado Semántico](https://semver.org/lang/es/).
 
 ## [Unreleased]
 
+### Añadido
+
+- Autocompletado de labels/valores contextual: `/api/labels` y
+  `/api/label-values` aceptan un `query=<selector LogQL>` opcional que Loki
+  usa para acotar el resultado a lo que realmente coexiste con los
+  matchers ya rellenados en otras filas del buscador (ej. si filtras por
+  `namespace="monitoring"`, el campo `pod` no sugiere pods de `logging`).
+- Panel de búsqueda redimensionable arrastrando un separador entre el
+  buscador y el visor (ancho persistido en `localStorage`).
+- Desplegable propio para el autocompletado de labels/valores en vez del
+  `<datalist>` nativo (poco fiable en Safari), y un botón para cancelar
+  una búsqueda en curso.
+
 ### Cambiado
 
 - El `X-Scope-OrgID` (Org ID) ya no se fija al arrancar el servidor: ahora
@@ -15,6 +28,13 @@ y este proyecto usa [Versionado Semántico](https://semver.org/lang/es/).
   consultar distintos tenants de Loki sin reiniciar la app.
 - `LOKI_ORG_ID` pasa de obligatoria a **opcional**: si se define, solo
   precarga el campo Org ID de la UI (vía el nuevo endpoint `GET /api/config`).
+
+### Corregido
+
+- Varios elementos (`empty-state`, `loading-state`, la fila de fechas
+  personalizadas, el separador de redimensionado) no se ocultaban nunca
+  realmente por un conflicto de CSS entre el atributo `hidden` y reglas
+  `display` propias de cada componente.
 
 ## [1.0.0] - 2026-08-21
 

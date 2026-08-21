@@ -193,26 +193,47 @@ function createMatcherRow(prefillKey = "") {
   const keyInput = row.querySelector(".matcher-key");
   const valueInput = row.querySelector(".matcher-value");
 
-  createAutocomplete(keyInput, { getOptions: loadLabelNames });
-  // Reads keyInput.value at the moment the value field is used, so it
-  // always reflects whichever label name is currently typed — no stale
-  // binding if the user changes the label after picking a value once.
-  createAutocomplete(valueInput, { getOptions: () => loadLabelValues(keyInput.value.trim()) });
+  // Scoped to whatever the OTHER rows already have filled in (e.g. once
+  // namespace="monitoring" is set, this row's suggestions only show
+  // labels/values that actually co-occur with that namespace — not
+  // everything in the tenant). Reads live at call time, so it stays
+  // correct as other rows change.
+  createAutocomplete(keyInput, { getOptions: () => loadLabelNames(row) });
+  createAutocomplete(valueInput, { getOptions: () => loadLabelValues(keyInput.value.trim(), row) });
 
   el.matchers.appendChild(row);
   return row;
 }
 
-async function loadLabelValues(name) {
+// Builds a LogQL selector from every OTHER fully-filled matcher row (key
+// and value both present), used to scope label/value discovery to what's
+// already been picked elsewhere in the form. Empty string if there's
+// nothing else to scope by yet.
+function buildContextSelector(excludeRow) {
+  const rows = [...el.matchers.querySelectorAll(".matcher-row")].filter((r) => r !== excludeRow);
+  const parts = rows
+    .map((row) => ({
+      key: row.querySelector(".matcher-key").value.trim(),
+      op: row.querySelector(".matcher-op").value,
+      value: row.querySelector(".matcher-value").value.trim(),
+    }))
+    .filter((m) => m.key && m.value)
+    .map((m) => `${m.key}${m.op}${JSON.stringify(m.value)}`);
+  return parts.length > 0 ? `{${parts.join(", ")}}` : "";
+}
+
+async function loadLabelValues(name, excludeRow) {
   if (!name) return [];
   const orgId = el.orgIdInput.value.trim();
-  const cacheKey = `${orgId}::${name}`;
+  const contextQuery = buildContextSelector(excludeRow);
+  const cacheKey = `${orgId}::${contextQuery}::${name}`;
   if (labelValuesCache.has(cacheKey)) {
     return labelValuesCache.get(cacheKey);
   }
   try {
     const qs = new URLSearchParams({ name });
     if (orgId) qs.set("orgId", orgId);
+    if (contextQuery) qs.set("query", contextQuery);
     const res = await fetch(`/api/label-values?${qs.toString()}`);
     if (!res.ok) return [];
     const data = await res.json();
@@ -224,18 +245,22 @@ async function loadLabelValues(name) {
   }
 }
 
-async function loadLabelNames() {
+async function loadLabelNames(excludeRow) {
   const orgId = el.orgIdInput.value.trim();
-  if (labelNamesCacheByOrg.has(orgId)) {
-    return labelNamesCacheByOrg.get(orgId);
+  const contextQuery = buildContextSelector(excludeRow);
+  const cacheKey = `${orgId}::${contextQuery}`;
+  if (labelNamesCacheByOrg.has(cacheKey)) {
+    return labelNamesCacheByOrg.get(cacheKey);
   }
   try {
-    const qs = orgId ? `?orgId=${encodeURIComponent(orgId)}` : "";
-    const res = await fetch(`/api/labels${qs}`);
+    const qs = new URLSearchParams();
+    if (orgId) qs.set("orgId", orgId);
+    if (contextQuery) qs.set("query", contextQuery);
+    const res = await fetch(`/api/labels?${qs.toString()}`);
     if (!res.ok) return [];
     const data = await res.json();
     const names = data.labels || [];
-    labelNamesCacheByOrg.set(orgId, names);
+    labelNamesCacheByOrg.set(cacheKey, names);
     return names;
   } catch (_) {
     return [];

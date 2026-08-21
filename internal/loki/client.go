@@ -140,14 +140,20 @@ func (c *Client) QueryRange(ctx context.Context, p QueryParams) ([]Entry, error)
 }
 
 // Labels returns every label name known to Loki within the given window,
-// used by the frontend to power the search-field autocomplete.
-func (c *Client) Labels(ctx context.Context, orgID, start, end string) ([]string, error) {
+// used by the frontend to power the search-field autocomplete. When query
+// is non-empty (a LogQL stream selector, e.g. `{namespace="monitoring"}`),
+// Loki scopes the result to label names that actually co-occur with that
+// selector, instead of every label name in the whole tenant.
+func (c *Client) Labels(ctx context.Context, orgID, query, start, end string) ([]string, error) {
 	q := url.Values{}
 	if start != "" {
 		q.Set("start", start)
 	}
 	if end != "" {
 		q.Set("end", end)
+	}
+	if query != "" {
+		q.Set("query", query)
 	}
 	var parsed labelsResponse
 	if err := c.get(ctx, "/loki/api/v1/labels", q, c.resolveOrgID(orgID), &parsed); err != nil {
@@ -156,14 +162,18 @@ func (c *Client) Labels(ctx context.Context, orgID, start, end string) ([]string
 	return parsed.Data, nil
 }
 
-// LabelValues returns every known value for a given label name.
-func (c *Client) LabelValues(ctx context.Context, orgID, name, start, end string) ([]string, error) {
+// LabelValues returns every known value for a given label name, optionally
+// scoped to a LogQL stream selector the same way Labels is (see above).
+func (c *Client) LabelValues(ctx context.Context, orgID, name, query, start, end string) ([]string, error) {
 	q := url.Values{}
 	if start != "" {
 		q.Set("start", start)
 	}
 	if end != "" {
 		q.Set("end", end)
+	}
+	if query != "" {
+		q.Set("query", query)
 	}
 	path := "/loki/api/v1/label/" + url.PathEscape(name) + "/values"
 	var parsed labelsResponse

@@ -96,12 +96,14 @@ func (h *Handlers) Query(w http.ResponseWriter, r *http.Request) {
 }
 
 // Labels handles GET /api/labels, listing known label names for the
-// search-form autocomplete.
+// search-form autocomplete. An optional ?query=<selector> scopes the
+// result to labels that co-occur with matchers already picked elsewhere
+// in the form (e.g. only labels seen on namespace="monitoring" streams).
 func (h *Handlers) Labels(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), metaTimeout)
 	defer cancel()
 
-	labels, err := h.loki.Labels(ctx, r.URL.Query().Get("orgId"), r.URL.Query().Get("start"), r.URL.Query().Get("end"))
+	labels, err := h.loki.Labels(ctx, r.URL.Query().Get("orgId"), r.URL.Query().Get("query"), r.URL.Query().Get("start"), r.URL.Query().Get("end"))
 	if err != nil {
 		writeError(w, http.StatusBadGateway, err.Error())
 		return
@@ -110,7 +112,8 @@ func (h *Handlers) Labels(w http.ResponseWriter, r *http.Request) {
 }
 
 // LabelValues handles GET /api/label-values?name=..., listing known values
-// for a given label name.
+// for a given label name. An optional ?query=<selector> scopes the result
+// the same way Labels does (see above).
 func (h *Handlers) LabelValues(w http.ResponseWriter, r *http.Request) {
 	name := r.URL.Query().Get("name")
 	if name == "" {
@@ -121,7 +124,7 @@ func (h *Handlers) LabelValues(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), metaTimeout)
 	defer cancel()
 
-	values, err := h.loki.LabelValues(ctx, r.URL.Query().Get("orgId"), name, r.URL.Query().Get("start"), r.URL.Query().Get("end"))
+	values, err := h.loki.LabelValues(ctx, r.URL.Query().Get("orgId"), name, r.URL.Query().Get("query"), r.URL.Query().Get("start"), r.URL.Query().Get("end"))
 	if err != nil {
 		writeError(w, http.StatusBadGateway, err.Error())
 		return
