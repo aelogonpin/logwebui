@@ -275,6 +275,12 @@ body.resizing-panel {
 }
 
 .org-field {
+  /* .field sets flex:1, meant for siblings sharing a .field-row so they
+     split its width evenly. This field stands alone as a direct child of
+     .search-panel's column flex layout, so flex:1 was instead making it
+     grow to swallow the panel's entire leftover vertical space — a big
+     dead gap below the input, not between sections. */
+  flex: none;
   margin-bottom: 4px;
 }
 
