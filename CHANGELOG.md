@@ -32,7 +32,24 @@ y este proyecto usa [Versionado Semántico](https://semver.org/lang/es/).
   Server-Sent Events (`/api/export` + `/api/export/download`) — pensado
   solo para descargar, no para previsualizar. El progreso mostrado es la
   fracción real del rango de tiempo del objeto ya recorrida, no una
-  animación simulada.
+  animación simulada. Incluye además un tiempo estimado restante, también
+  real (extrapolado del ritmo medido de esa descarga concreta, no una
+  cuenta atrás animada).
+- Mientras el panel de ciclo de vida está abierto, el autocompletado de
+  labels/valores usa su propia ventana de búsqueda (7/30/90/180 días) en
+  vez de las 24h del buscador principal, para que salgan pods/objetos
+  antiguos que ya no están activos — antes solo aparecía el más reciente.
+- Chips rápidos de rango de tiempo: añadidos 7d/15d/30d junto a los ya
+  existentes 15m/1h/6h/24h/3d.
+- Tooltip con el nombre completo al pasar el ratón sobre una sugerencia
+  del autocompletado que aparece cortada con "…".
+- Al abrir el panel de "Ciclo de vida completo", el resto de opciones de
+  búsqueda (rango de tiempo, límite, orden, botón de buscar) se atenúan y
+  quedan bloqueadas — esa exportación las ignora por completo, así que
+  deja claro que no aplican mientras tanto.
+- Panel de búsqueda reordenado (Org ID → Rango de tiempo → Labels →
+  Límite y orden), ya que el autocompletado depende del rango elegido, y
+  con iconos discretos por sección para un aspecto más cuidado.
 
 ### Cambiado
 
@@ -55,6 +72,14 @@ y este proyecto usa [Versionado Semántico](https://semver.org/lang/es/).
   gruesa que el nanosegundo (segundo, milisegundo…). Ahora se detecta la
   página repetida y se corta la exportación de forma limpia. Cubierto
   con tests de regresión (`internal/api/export_test.go`).
+- El separador de redimensionado del panel quedaba invisible e imposible
+  de arrastrar con precisión: estaba posicionado fuera de la caja del
+  panel de búsqueda, que lo recortaba por su `overflow-y: auto`. Ahora es
+  una columna real del grid, no un elemento superpuesto.
+- Hueco vertical vacío entre "Org ID" y "Rango de tiempo": el campo Org ID
+  heredaba `flex: 1` de una clase pensada para compartir una fila con
+  otro campo, así que absorbía todo el espacio vertical sobrante del
+  panel en vez de ocupar solo su altura natural.
 
 ## [1.0.0] - 2026-08-21
 
