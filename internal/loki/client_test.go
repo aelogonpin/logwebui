@@ -135,3 +135,33 @@ func TestClientQueryRange(t *testing.T) {
 		t.Errorf("expected stream labels to be attached, got %+v", entries[0].Labels)
 	}
 }
+
+func TestClientQueryRangePerRequestOrgIDOverridesDefault(t *testing.T) {
+	var capturedOrgID string
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		capturedOrgID = r.Header.Get("X-Scope-OrgID")
+		resp := map[string]interface{}{
+			"status": "success",
+			"data":   map[string]interface{}{"resultType": "streams", "result": []map[string]interface{}{}},
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(resp)
+	}))
+	defer srv.Close()
+
+	// Client has a default org from LOKI_ORG_ID, but the web UI can send a
+	// different one per request — that must win.
+	client := NewClient(srv.URL, "admin", "secret", "default-org")
+
+	_, err := client.QueryRange(context.Background(), QueryParams{
+		Matchers: []LabelMatcher{{Key: "namespace", Value: "x", Op: "="}},
+		OrgID:    "ui-provided-org",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if capturedOrgID != "ui-provided-org" {
+		t.Errorf("expected per-request orgID to override client default, got %q", capturedOrgID)
+	}
+}

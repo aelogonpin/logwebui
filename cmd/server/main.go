@@ -20,16 +20,16 @@ func main() {
 		log.Fatalf("configuration error: %v", err)
 	}
 
-	client := loki.NewClient(cfg.LokiURL, cfg.LokiUser, cfg.LokiPass, cfg.LokiOrgID)
+	client := loki.NewClient(cfg.LokiURL, cfg.LokiUser, cfg.LokiPass, cfg.DefaultLokiOrgID)
 
 	webFS, err := fs.Sub(lokiviews.WebFiles, "web")
 	if err != nil {
 		log.Fatalf("failed to load embedded web assets: %v", err)
 	}
 
-	router := api.NewRouter(client, webFS)
+	router := api.NewRouter(client, cfg.DefaultLokiOrgID, webFS)
 
 	addr := ":" + cfg.Port
-	log.Printf("lokiviews listening on %s (loki=%s org=%s)", addr, cfg.LokiURL, cfg.LokiOrgID)
+	log.Printf("lokiviews listening on %s (loki=%s)", addr, cfg.LokiURL)
 	log.Fatal(http.ListenAndServe(addr, router))
 }

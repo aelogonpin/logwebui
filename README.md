@@ -61,8 +61,16 @@ faltan.
 | `LOKI_URL`    | Sí          | URL base del servidor Loki                                 | `https://loki.monitoring.seidor-retail.com`  |
 | `LOKI_USER`   | Sí          | Usuario para Basic Auth                                    | `admin`                                       |
 | `LOKI_PASS`   | Sí          | Contraseña para Basic Auth                                 | `********`                                    |
-| `LOKI_ORG_ID` | Sí          | Valor inyectado en la cabecera `X-Scope-OrgID`             | `Clarel-pro`                                  |
+| `LOKI_ORG_ID` | No          | Valor por defecto para precargar el campo "Org ID" de la UI | `Clarel-pro`                                  |
 | `PORT`        | No          | Puerto HTTP del servidor. Por defecto `8080`                | `8080`                                        |
+
+**`X-Scope-OrgID` se indica desde la propia interfaz web**, no al arrancar
+el servidor: el panel de búsqueda tiene un campo "Org ID" que se envía con
+cada consulta (`/api/query`, `/api/labels`, `/api/label-values`). Esto
+permite consultar distintos tenants de Loki desde la misma instancia de la
+app sin reiniciarla. `LOKI_ORG_ID` es opcional y solo sirve para
+precargar ese campo con un valor por defecto al abrir la app
+(`GET /api/config`); si no se define, el campo empieza vacío.
 
 Copia `.env.example` a `.env` y rellena tus valores:
 
@@ -108,35 +116,41 @@ docker run --rm -p 8080:8080 \
 
 ## Uso de la interfaz
 
-1. **Buscador**: añade uno o varios labels (`namespace`, `pod`,
+1. **Org ID**: indica el `X-Scope-OrgID` del tenant de Loki que quieres
+   consultar (ej. `Clarel-pro`). Se envía con cada petición; si
+   `LOKI_ORG_ID` está definido en el servidor, este campo se precarga con
+   ese valor, pero siempre es editable.
+2. **Buscador**: añade uno o varios labels (`namespace`, `pod`,
    `service_name`, cualquier label que exponga tu Loki) con su operador
    (`=`, `!=`, `=~`, `!~`) y valor. Los campos ofrecen autocompletado
-   consultando `/api/labels` y `/api/label-values`.
-2. **Rango de tiempo**: chips rápidos (15m/1h/6h/24h/3d) o fechas
+   consultando `/api/labels` y `/api/label-values` (usando el Org ID actual).
+3. **Rango de tiempo**: chips rápidos (15m/1h/6h/24h/3d) o fechas
    personalizadas.
-3. **Límite y orden**: selecciona cuántas líneas traer y si quieres las
+4. **Límite y orden**: selecciona cuántas líneas traer y si quieres las
    más recientes o las más antiguas primero.
-4. **Visor de logs**: panel tipo terminal con cada línea coloreada según
+5. **Visor de logs**: panel tipo terminal con cada línea coloreada según
    la severidad detectada (`ERROR`, `WARN`, `INFO`, `DEBUG`/`TRACE`).
    Usa los chips (`Solo Errores`, `Solo Warnings`…) o el campo de texto
    libre para filtrar sin volver a consultar Loki.
-5. **Descarga**: el botón "Descargar .txt" genera un archivo de texto
+6. **Descarga**: el botón "Descargar .txt" genera un archivo de texto
    plano con las líneas actualmente visibles (respeta los filtros
    aplicados).
 
 ## API interna
 
-| Endpoint                         | Método | Descripción                                              |
-|-----------------------------------|:------:|-----------------------------------------------------------|
-| `/api/health`                     | GET    | Liveness check                                             |
-| `/api/labels`                     | GET    | Lista de label names conocidos por Loki                    |
-| `/api/label-values?name=<label>`  | GET    | Valores conocidos para un label                            |
-| `/api/query`                      | POST   | Consulta logs (ver payload abajo)                           |
+| Endpoint                          | Método | Descripción                                                |
+|------------------------------------|:------:|-------------------------------------------------------------|
+| `/api/health`                      | GET    | Liveness check                                               |
+| `/api/config`                      | GET    | Config no sensible expuesta al frontend (`defaultOrgId`)      |
+| `/api/labels?orgId=<org>`          | GET    | Lista de label names conocidos por Loki para ese tenant        |
+| `/api/label-values?name=<label>&orgId=<org>` | GET | Valores conocidos para un label en ese tenant         |
+| `/api/query`                       | POST   | Consulta logs (ver payload abajo)                             |
 
 Payload de `/api/query`:
 
 ```json
 {
+  "orgId": "Clarel-pro",
   "matchers": [
     { "key": "namespace", "value": "clarel-pro", "op": "=" },
     { "key": "pod", "value": "api-.*", "op": "=~" }
@@ -147,6 +161,10 @@ Payload de `/api/query`:
   "direction": "backward"
 }
 ```
+
+Si `orgId` se omite o va vacío, el backend usa `LOKI_ORG_ID` (si está
+definido) como fallback; si tampoco existe, no se envía cabecera
+`X-Scope-OrgID`.
 
 ## Documentación relacionada
 

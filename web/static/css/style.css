@@ -198,6 +198,15 @@ body {
   margin-bottom: 10px;
 }
 
+.org-field {
+  margin-bottom: 4px;
+}
+
+.field-hint {
+  color: var(--text-faint);
+  font-weight: 400;
+}
+
 input, select {
   background: var(--bg-elevated);
   border: 1px solid var(--border);

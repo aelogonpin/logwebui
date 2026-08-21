@@ -9,11 +9,15 @@ import (
 
 // Config holds every runtime setting the application needs.
 type Config struct {
-	LokiURL   string
-	LokiUser  string
-	LokiPass  string
-	LokiOrgID string
-	Port      string
+	LokiURL  string
+	LokiUser string
+	LokiPass string
+	Port     string
+
+	// DefaultLokiOrgID is optional. X-Scope-OrgID is entered per-query in
+	// the web UI (Loki tenants can vary per request); this only pre-fills
+	// that field when set, it is never enforced as a fixed value.
+	DefaultLokiOrgID string
 }
 
 // Load reads and validates the required environment variables. It fails
@@ -21,11 +25,11 @@ type Config struct {
 // misconfiguration is caught at startup instead of on the first request.
 func Load() (*Config, error) {
 	cfg := &Config{
-		LokiURL:   os.Getenv("LOKI_URL"),
-		LokiUser:  os.Getenv("LOKI_USER"),
-		LokiPass:  os.Getenv("LOKI_PASS"),
-		LokiOrgID: os.Getenv("LOKI_ORG_ID"),
-		Port:      os.Getenv("PORT"),
+		LokiURL:          os.Getenv("LOKI_URL"),
+		LokiUser:         os.Getenv("LOKI_USER"),
+		LokiPass:         os.Getenv("LOKI_PASS"),
+		DefaultLokiOrgID: os.Getenv("LOKI_ORG_ID"),
+		Port:             os.Getenv("PORT"),
 	}
 
 	if cfg.Port == "" {
@@ -41,9 +45,6 @@ func Load() (*Config, error) {
 	}
 	if cfg.LokiPass == "" {
 		missing = append(missing, "LOKI_PASS")
-	}
-	if cfg.LokiOrgID == "" {
-		missing = append(missing, "LOKI_ORG_ID")
 	}
 
 	if len(missing) > 0 {

@@ -16,12 +16,16 @@ const (
 
 // Handlers wires the Loki client into HTTP endpoints.
 type Handlers struct {
-	loki *loki.Client
+	loki             *loki.Client
+	defaultLokiOrgID string
 }
 
 // NewHandlers builds a Handlers bound to the given Loki client.
-func NewHandlers(c *loki.Client) *Handlers {
-	return &Handlers{loki: c}
+// defaultLokiOrgID (from LOKI_ORG_ID, optional) is only exposed via
+// /api/config so the frontend can pre-fill the Org ID field; it is never
+// enforced server-side.
+func NewHandlers(c *loki.Client, defaultLokiOrgID string) *Handlers {
+	return &Handlers{loki: c, defaultLokiOrgID: defaultLokiOrgID}
 }
 
 type queryRequest struct {
@@ -30,6 +34,7 @@ type queryRequest struct {
 	End       string              `json:"end"`
 	Limit     int                 `json:"limit"`
 	Direction string              `json:"direction"`
+	OrgID     string              `json:"orgId"`
 }
 
 // Query handles POST /api/query: builds a LogQL selector from the posted
@@ -55,6 +60,7 @@ func (h *Handlers) Query(w http.ResponseWriter, r *http.Request) {
 		End:       req.End,
 		Limit:     req.Limit,
 		Direction: req.Direction,
+		OrgID:     req.OrgID,
 	})
 	if err != nil {
 		writeError(w, http.StatusBadGateway, err.Error())
@@ -73,7 +79,7 @@ func (h *Handlers) Labels(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), metaTimeout)
 	defer cancel()
 
-	labels, err := h.loki.Labels(ctx, r.URL.Query().Get("start"), r.URL.Query().Get("end"))
+	labels, err := h.loki.Labels(ctx, r.URL.Query().Get("orgId"), r.URL.Query().Get("start"), r.URL.Query().Get("end"))
 	if err != nil {
 		writeError(w, http.StatusBadGateway, err.Error())
 		return
@@ -93,12 +99,21 @@ func (h *Handlers) LabelValues(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), metaTimeout)
 	defer cancel()
 
-	values, err := h.loki.LabelValues(ctx, name, r.URL.Query().Get("start"), r.URL.Query().Get("end"))
+	values, err := h.loki.LabelValues(ctx, r.URL.Query().Get("orgId"), name, r.URL.Query().Get("start"), r.URL.Query().Get("end"))
 	if err != nil {
 		writeError(w, http.StatusBadGateway, err.Error())
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{"values": values})
+}
+
+// Config handles GET /api/config, exposing non-secret runtime defaults the
+// frontend needs — currently just the optional LOKI_ORG_ID fallback used
+// to pre-fill the Org ID field.
+func (h *Handlers) Config(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"defaultOrgId": h.defaultLokiOrgID,
+	})
 }
 
 // Health handles GET /api/health for container/orchestrator liveness checks.

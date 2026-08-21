@@ -28,21 +28,24 @@ const (
 
 // Client talks to a single Loki instance.
 type Client struct {
-	baseURL string
-	user    string
-	pass    string
-	orgID   string
-	http    *http.Client
+	baseURL      string
+	user         string
+	pass         string
+	defaultOrgID string
+	http         *http.Client
 }
 
 // NewClient builds a Loki client. user/pass may be empty to skip Basic Auth.
-func NewClient(baseURL, user, pass, orgID string) *Client {
+// defaultOrgID is only a fallback used when a call doesn't specify its own
+// orgID (the web UI normally sends one with every request, since Loki
+// tenants can vary per query).
+func NewClient(baseURL, user, pass, defaultOrgID string) *Client {
 	return &Client{
-		baseURL: strings.TrimRight(baseURL, "/"),
-		user:    user,
-		pass:    pass,
-		orgID:   orgID,
-		http:    &http.Client{Timeout: 30 * time.Second},
+		baseURL:      strings.TrimRight(baseURL, "/"),
+		user:         user,
+		pass:         pass,
+		defaultOrgID: defaultOrgID,
+		http:         &http.Client{Timeout: 30 * time.Second},
 	}
 }
 
@@ -53,6 +56,7 @@ type QueryParams struct {
 	End       string // RFC3339, optional
 	Limit     int
 	Direction string // "forward" | "backward"
+	OrgID     string // X-Scope-OrgID; falls back to the client default if empty
 }
 
 // BuildSelector renders a plain LogQL stream selector such as
@@ -110,7 +114,7 @@ func (c *Client) QueryRange(ctx context.Context, p QueryParams) ([]Entry, error)
 	}
 
 	var parsed queryRangeResponse
-	if err := c.get(ctx, "/loki/api/v1/query_range", q, &parsed); err != nil {
+	if err := c.get(ctx, "/loki/api/v1/query_range", q, c.resolveOrgID(p.OrgID), &parsed); err != nil {
 		return nil, err
 	}
 
@@ -137,7 +141,7 @@ func (c *Client) QueryRange(ctx context.Context, p QueryParams) ([]Entry, error)
 
 // Labels returns every label name known to Loki within the given window,
 // used by the frontend to power the search-field autocomplete.
-func (c *Client) Labels(ctx context.Context, start, end string) ([]string, error) {
+func (c *Client) Labels(ctx context.Context, orgID, start, end string) ([]string, error) {
 	q := url.Values{}
 	if start != "" {
 		q.Set("start", start)
@@ -146,14 +150,14 @@ func (c *Client) Labels(ctx context.Context, start, end string) ([]string, error
 		q.Set("end", end)
 	}
 	var parsed labelsResponse
-	if err := c.get(ctx, "/loki/api/v1/labels", q, &parsed); err != nil {
+	if err := c.get(ctx, "/loki/api/v1/labels", q, c.resolveOrgID(orgID), &parsed); err != nil {
 		return nil, err
 	}
 	return parsed.Data, nil
 }
 
 // LabelValues returns every known value for a given label name.
-func (c *Client) LabelValues(ctx context.Context, name, start, end string) ([]string, error) {
+func (c *Client) LabelValues(ctx context.Context, orgID, name, start, end string) ([]string, error) {
 	q := url.Values{}
 	if start != "" {
 		q.Set("start", start)
@@ -163,13 +167,22 @@ func (c *Client) LabelValues(ctx context.Context, name, start, end string) ([]st
 	}
 	path := "/loki/api/v1/label/" + url.PathEscape(name) + "/values"
 	var parsed labelsResponse
-	if err := c.get(ctx, path, q, &parsed); err != nil {
+	if err := c.get(ctx, path, q, c.resolveOrgID(orgID), &parsed); err != nil {
 		return nil, err
 	}
 	return parsed.Data, nil
 }
 
-func (c *Client) get(ctx context.Context, path string, q url.Values, out interface{}) error {
+// resolveOrgID prefers a per-request org ID (as entered in the web UI) and
+// only falls back to the LOKI_ORG_ID startup default when none was given.
+func (c *Client) resolveOrgID(requestOrgID string) string {
+	if requestOrgID != "" {
+		return requestOrgID
+	}
+	return c.defaultOrgID
+}
+
+func (c *Client) get(ctx context.Context, path string, q url.Values, orgID string, out interface{}) error {
 	endpoint := c.baseURL + path
 	if encoded := q.Encode(); encoded != "" {
 		endpoint += "?" + encoded
@@ -179,7 +192,7 @@ func (c *Client) get(ctx context.Context, path string, q url.Values, out interfa
 	if err != nil {
 		return err
 	}
-	c.applyHeaders(req)
+	c.applyHeaders(req, orgID)
 
 	resp, err := c.http.Do(req)
 	if err != nil {
@@ -202,12 +215,12 @@ func (c *Client) get(ctx context.Context, path string, q url.Values, out interfa
 	return nil
 }
 
-func (c *Client) applyHeaders(req *http.Request) {
+func (c *Client) applyHeaders(req *http.Request, orgID string) {
 	if c.user != "" || c.pass != "" {
 		req.SetBasicAuth(c.user, c.pass)
 	}
-	if c.orgID != "" {
-		req.Header.Set("X-Scope-OrgID", c.orgID)
+	if orgID != "" {
+		req.Header.Set("X-Scope-OrgID", orgID)
 	}
 	req.Header.Set("Accept", "application/json")
 }

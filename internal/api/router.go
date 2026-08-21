@@ -11,11 +11,12 @@ import (
 
 // NewRouter builds the full HTTP handler: the JSON API under /api/* plus
 // the embedded frontend served as static files at /.
-func NewRouter(client *loki.Client, webFS fs.FS) http.Handler {
-	h := NewHandlers(client)
+func NewRouter(client *loki.Client, defaultLokiOrgID string, webFS fs.FS) http.Handler {
+	h := NewHandlers(client, defaultLokiOrgID)
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("/api/health", Health)
+	mux.HandleFunc("/api/config", h.Config)
 	mux.HandleFunc("/api/query", h.Query)
 	mux.HandleFunc("/api/labels", h.Labels)
 	mux.HandleFunc("/api/label-values", h.LabelValues)

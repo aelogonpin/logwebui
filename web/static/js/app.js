@@ -31,6 +31,7 @@ function detectSeverity(line) {
 // ---------- DOM refs ----------
 
 const el = {
+  orgIdInput: document.getElementById("orgIdInput"),
   matchers: document.getElementById("matchers"),
   addMatcher: document.getElementById("addMatcher"),
   quickRange: document.getElementById("quickRange"),
@@ -50,7 +51,7 @@ const el = {
   connStatus: document.getElementById("connStatus"),
 };
 
-let labelNamesCache = null;
+const labelNamesCacheByOrg = new Map();
 
 // ---------- Matcher rows ----------
 
@@ -97,7 +98,10 @@ async function attachValueAutocomplete(keyInput, valueInput) {
   const name = keyInput.value.trim();
   if (!name) return;
   try {
-    const res = await fetch(`/api/label-values?name=${encodeURIComponent(name)}`);
+    const orgId = el.orgIdInput.value.trim();
+    const qs = new URLSearchParams({ name });
+    if (orgId) qs.set("orgId", orgId);
+    const res = await fetch(`/api/label-values?${qs.toString()}`);
     if (!res.ok) return;
     const data = await res.json();
     const listId = `values-${cssSafeId(name)}`;
@@ -124,24 +128,46 @@ function cssSafeId(s) {
 }
 
 async function loadLabelNames() {
-  if (labelNamesCache) return labelNamesCache;
+  const orgId = el.orgIdInput.value.trim();
+  if (labelNamesCacheByOrg.has(orgId)) {
+    return labelNamesCacheByOrg.get(orgId);
+  }
   try {
-    const res = await fetch("/api/labels");
+    const qs = orgId ? `?orgId=${encodeURIComponent(orgId)}` : "";
+    const res = await fetch(`/api/labels${qs}`);
     if (!res.ok) return [];
     const data = await res.json();
-    labelNamesCache = data.labels || [];
+    const names = data.labels || [];
+    labelNamesCacheByOrg.set(orgId, names);
     const dl = document.getElementById("labelNamesList");
     dl.innerHTML = "";
-    labelNamesCache.forEach((name) => {
+    names.forEach((name) => {
       const opt = document.createElement("option");
       opt.value = name;
       dl.appendChild(opt);
     });
-    return labelNamesCache;
+    return names;
   } catch (_) {
     return [];
   }
 }
+
+async function loadDefaultOrgId() {
+  try {
+    const res = await fetch("/api/config");
+    if (!res.ok) return;
+    const data = await res.json();
+    if (data.defaultOrgId) {
+      el.orgIdInput.value = data.defaultOrgId;
+    }
+  } catch (_) {
+    // No default configured server-side — the field just stays empty.
+  }
+}
+
+el.orgIdInput.addEventListener("change", () => {
+  loadLabelNames();
+});
 
 // ---------- Time range ----------
 
@@ -211,6 +237,7 @@ async function runSearch() {
     matchers,
     limit: Number(el.limitSelect.value),
     direction: el.directionSelect.value,
+    orgId: el.orgIdInput.value.trim(),
   };
   if (el.startTime.value) payload.start = new Date(el.startTime.value).toISOString();
   if (el.endTime.value) payload.end = new Date(el.endTime.value).toISOString();
@@ -366,4 +393,4 @@ el.downloadBtn.addEventListener("click", () => {
 ensureLabelNamesDatalist();
 createMatcherRow("namespace");
 applyQuickRange(1440);
-loadLabelNames();
+loadDefaultOrgId().then(loadLabelNames);

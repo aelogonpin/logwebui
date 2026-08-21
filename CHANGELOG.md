@@ -5,6 +5,17 @@ Todos los cambios notables de este proyecto se documentan en este archivo.
 El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/),
 y este proyecto usa [Versionado Semántico](https://semver.org/lang/es/).
 
+## [Unreleased]
+
+### Cambiado
+
+- El `X-Scope-OrgID` (Org ID) ya no se fija al arrancar el servidor: ahora
+  se indica desde un campo en la propia interfaz web y se envía con cada
+  consulta (`/api/query`, `/api/labels`, `/api/label-values`), permitiendo
+  consultar distintos tenants de Loki sin reiniciar la app.
+- `LOKI_ORG_ID` pasa de obligatoria a **opcional**: si se define, solo
+  precarga el campo Org ID de la UI (vía el nuevo endpoint `GET /api/config`).
+
 ## [1.0.0] - 2026-08-21
 
 ### Añadido
