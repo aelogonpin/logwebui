@@ -1,0 +1,14 @@
+services:
+  lokiviews:
+    build: .
+    image: lokiviews:local
+    container_name: lokiviews
+    ports:
+      - "8080:8080"
+    environment:
+      LOKI_URL: ${LOKI_URL}
+      LOKI_USER: ${LOKI_USER}
+      LOKI_PASS: ${LOKI_PASS}
+      LOKI_ORG_ID: ${LOKI_ORG_ID}
+      PORT: "8080"
+    restart: unless-stopped

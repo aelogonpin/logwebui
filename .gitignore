@@ -1,0 +1,18 @@
+# Environment
+.env
+.env.*
+!.env.example
+
+# Go build artifacts
+/bin/
+/dist/
+lokiviews
+*.exe
+*.test
+*.out
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/
+*.swp

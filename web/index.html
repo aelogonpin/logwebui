@@ -1,0 +1,113 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>LokiViews · Log Downloader &amp; Viewer</title>
+  <link rel="stylesheet" href="/static/css/style.css" />
+</head>
+<body>
+  <div class="app">
+    <header class="app-header">
+      <div class="brand">
+        <span class="brand-mark">L</span>
+        <div>
+          <h1>LokiViews</h1>
+          <p class="brand-sub">Log Downloader &amp; Viewer</p>
+        </div>
+      </div>
+      <div class="status" id="connStatus">
+        <span class="dot dot-idle"></span>
+        <span class="status-text">Listo</span>
+      </div>
+    </header>
+
+    <main class="layout">
+      <section class="panel search-panel">
+        <h2 class="panel-title">Búsqueda</h2>
+
+        <div class="field-group" id="matchers">
+          <!-- matcher rows injected here -->
+        </div>
+        <button type="button" class="btn btn-ghost btn-sm" id="addMatcher">+ Añadir label</button>
+
+        <div class="divider"></div>
+
+        <h3 class="panel-subtitle">Rango de tiempo</h3>
+        <div class="quick-range" id="quickRange">
+          <button type="button" class="chip" data-minutes="15">15m</button>
+          <button type="button" class="chip" data-minutes="60">1h</button>
+          <button type="button" class="chip" data-minutes="360">6h</button>
+          <button type="button" class="chip active" data-minutes="1440">24h</button>
+          <button type="button" class="chip" data-minutes="4320">3d</button>
+        </div>
+        <div class="field-row">
+          <label class="field">
+            <span>Desde</span>
+            <input type="datetime-local" id="startTime" />
+          </label>
+          <label class="field">
+            <span>Hasta</span>
+            <input type="datetime-local" id="endTime" />
+          </label>
+        </div>
+
+        <div class="divider"></div>
+
+        <div class="field-row">
+          <label class="field">
+            <span>Límite de líneas</span>
+            <select id="limitSelect">
+              <option value="100">100</option>
+              <option value="500">500</option>
+              <option value="1000" selected>1000</option>
+              <option value="2000">2000</option>
+              <option value="5000">5000</option>
+            </select>
+          </label>
+          <label class="field">
+            <span>Orden</span>
+            <select id="directionSelect">
+              <option value="backward" selected>Más recientes primero</option>
+              <option value="forward">Más antiguos primero</option>
+            </select>
+          </label>
+        </div>
+
+        <button type="button" class="btn btn-primary btn-block" id="searchBtn">
+          <span id="searchBtnLabel">Buscar logs</span>
+        </button>
+        <p class="error-text" id="searchError" hidden></p>
+      </section>
+
+      <section class="panel viewer-panel">
+        <div class="viewer-toolbar">
+          <div class="toolbar-left">
+            <span class="result-count" id="resultCount">Sin resultados todavía</span>
+          </div>
+          <div class="toolbar-center">
+            <button type="button" class="chip sev-chip sev-all active" data-sev="all">Todos</button>
+            <button type="button" class="chip sev-chip sev-error" data-sev="error">Solo Errores</button>
+            <button type="button" class="chip sev-chip sev-warn" data-sev="warn">Solo Warnings</button>
+            <button type="button" class="chip sev-chip sev-info" data-sev="info">Solo Info</button>
+            <button type="button" class="chip sev-chip sev-debug" data-sev="debug">Solo Debug</button>
+          </div>
+          <div class="toolbar-right">
+            <input type="search" id="freeFilter" placeholder="Filtrar texto…" class="text-filter" />
+            <button type="button" class="btn btn-accent btn-sm" id="downloadBtn" disabled>⬇ Descargar .txt</button>
+          </div>
+        </div>
+
+        <div class="terminal" id="terminal">
+          <div class="empty-state" id="emptyState">
+            <p>Configura una búsqueda y pulsa <strong>Buscar logs</strong> para ver los resultados aquí.</p>
+          </div>
+          <div class="log-lines" id="logLines" hidden></div>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <script src="/static/js/app.js"></script>
+</body>
+</html>
