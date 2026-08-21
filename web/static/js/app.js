@@ -13,6 +13,7 @@ const state = {
   severityFilter: "all",
   textFilter: "",
   searching: false,
+  abortController: null,
   timeMode: "quick", // "quick" | "custom" — mutually exclusive, never both
   quickMinutes: 1440,
 };
@@ -257,8 +258,13 @@ function setStatus(mode, text) {
 }
 
 function setLoading(isLoading) {
-  el.searchBtn.disabled = isLoading;
-  el.searchBtnLabel.textContent = isLoading ? "Buscando… (espera a que termine)" : "Buscar logs";
+  // The button stays clickable throughout: while searching it turns into
+  // a Cancel action instead of being disabled, so a search that looks
+  // stuck can always be aborted.
+  el.searchBtn.disabled = false;
+  el.searchBtn.classList.toggle("btn-primary", !isLoading);
+  el.searchBtn.classList.toggle("btn-danger", isLoading);
+  el.searchBtnLabel.textContent = isLoading ? "✕ Cancelar búsqueda" : "Buscar logs";
   setStatus(isLoading ? "loading" : "idle", isLoading ? "Consultando Loki…" : "Listo");
 
   if (isLoading) {
@@ -322,6 +328,8 @@ async function runSearch() {
     end: range.end,
   };
 
+  const controller = new AbortController();
+  state.abortController = controller;
   state.searching = true;
   setLoading(true);
   try {
@@ -329,6 +337,7 @@ async function runSearch() {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
+      signal: controller.signal,
     });
     const data = await res.json();
     if (!res.ok) {
@@ -349,13 +358,16 @@ async function runSearch() {
     });
     renderLogs();
   } catch (err) {
-    setStatus("error", "Error de consulta");
-    el.searchError.textContent = err.message || "No se pudo consultar Loki.";
+    const wasCancelled = err.name === "AbortError";
+    setStatus(wasCancelled ? "idle" : "error", wasCancelled ? "Cancelada" : "Error de consulta");
+    el.searchError.textContent = wasCancelled
+      ? "Búsqueda cancelada."
+      : err.message || "No se pudo consultar Loki.";
     el.searchError.hidden = false;
     el.queryMeta.hidden = true;
     // setLoading(true) hid whatever was on screen; since this search
-    // failed, state.entries is unchanged, so just re-sync the view to it
-    // (old results reappear, or the empty hint if there were none).
+    // didn't complete, state.entries is unchanged, so just re-sync the
+    // view to it (old results reappear, or the empty hint if there were none).
     if (state.entries.length > 0) {
       el.logLines.hidden = false;
     } else {
@@ -363,11 +375,18 @@ async function runSearch() {
     }
   } finally {
     state.searching = false;
+    state.abortController = null;
     setLoading(false);
   }
 }
 
-el.searchBtn.addEventListener("click", runSearch);
+el.searchBtn.addEventListener("click", () => {
+  if (state.searching) {
+    state.abortController?.abort();
+  } else {
+    runSearch();
+  }
+});
 el.addMatcher.addEventListener("click", () => createMatcherRow());
 
 // ---------- Rendering & filtering ----------
