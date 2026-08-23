@@ -9,17 +9,19 @@ leer logs cómodamente.
 
 ## Por qué el backend nunca usa `line_format`
 
-El Loki de este proyecto está detrás de un Nginx (WAF) que bloquea con
-`403` cualquier petición que contenga `{{` — protección genérica contra
-Server-Side Template Injection. La sintaxis de `| line_format` en LogQL usa
-exactamente ese token, así que cualquier pipeline de formateo dispara el
-bloqueo.
+Es habitual que un Loki de producción esté detrás de un WAF u otro proxy
+con protección genérica contra Server-Side Template Injection, que
+bloquea (normalmente con `403`) cualquier petición cuyo cuerpo o query
+string contenga `{{`. La sintaxis de `| line_format` en LogQL usa
+exactamente ese token, así que cualquier pipeline de formateo dispararía
+ese tipo de bloqueo.
 
-Para evitarlo, el backend **nunca** construye pipelines LogQL: solo envía
-un *stream selector* plano (`{namespace="backend", pod=~"api-.*"}`) a
-`query_range`. Loki devuelve el JSON "sucio" tal cual, y es Go quien
-extrae el campo `message` (o `msg`/`log`, si el log es JSON estructurado) y
-lo entrega ya limpio al frontend. Ver `internal/loki/client.go`.
+Para evitar depender de que el Loki de turno no tenga esa protección, el
+backend **nunca** construye pipelines LogQL: solo envía un *stream
+selector* plano (`{namespace="backend", pod=~"api-.*"}`) a `query_range`.
+Loki devuelve el JSON "sucio" tal cual, y es Go quien extrae el campo
+`message` (o `msg`/`log`, si el log es JSON estructurado) y lo entrega ya
+limpio al frontend. Ver `internal/loki/client.go`.
 
 ## Arquitectura
 

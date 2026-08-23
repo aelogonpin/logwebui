@@ -126,8 +126,9 @@ y este proyecto usa [Versionado Semántico](https://semver.org/lang/es/).
 - Backend en Go que consulta la API de Loki (`query_range`, `labels`,
   `label/{name}/values`) sin depender de librerías externas.
 - Estrategia de consulta sin pipelines LogQL (`| line_format`) para evitar
-  el bloqueo `403` del WAF ante payloads con `{{`; el campo `message` se
-  extrae y limpia en Go a partir del JSON crudo de Loki.
+  el bloqueo típico de un WAF ante payloads con `{{` (protección genérica
+  contra SSTI); el campo `message` se extrae y limpia en Go a partir del
+  JSON crudo de Loki.
 - Carga de configuración vía variables de entorno (`LOKI_URL`,
   `LOKI_USER`, `LOKI_PASS`, `LOKI_ORG_ID`, `PORT`) con validación fail-fast
   al arrancar.

@@ -1,11 +1,11 @@
 // Package loki is a minimal, dependency-free client for Loki's HTTP query
 // API. It deliberately never builds a LogQL pipeline (no "| line_format",
-// no template functions): the upstream Nginx WAF blocks any request body
-// or query string containing "{{" as a Server-Side Template Injection
-// guard, and Loki's line_format syntax uses exactly that token. Instead,
-// this client sends a bare stream selector to Loki, receives the raw
-// JSON, and extracts/cleans the log message in Go before it ever reaches
-// the frontend.
+// no template functions): a WAF in front of Loki may block any request
+// body or query string containing "{{" as a generic Server-Side Template
+// Injection guard, and Loki's line_format syntax uses exactly that token.
+// Instead, this client sends a bare stream selector to Loki, receives the
+// raw JSON, and extracts/cleans the log message in Go before it ever
+// reaches the frontend.
 package loki
 
 import (
