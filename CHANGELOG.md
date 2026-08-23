@@ -9,6 +9,24 @@ y este proyecto usa [Versionado Semántico](https://semver.org/lang/es/).
 
 ### Añadido
 
+- Pipeline de CI en GitHub Actions (`.github/workflows/ci.yml`): en cada
+  push/PR corre `golangci-lint`, `go vet`, comprueba formateo con
+  `gofmt`, `go test -race ./...`, y construye la imagen Docker (sin
+  publicarla) para detectar roturas del `Dockerfile` pronto.
+- Workflow de release (`.github/workflows/release.yml`): al hacer push de
+  un tag semántico (`vX.Y.Z`) construye y publica la imagen en GHCR
+  (`ghcr.io/aelogonpin/logwebui`) con tags `X.Y.Z`/`X.Y`/`X`/`latest`.
+- `HEALTHCHECK` en el `Dockerfile`. Como la imagen final es `distroless`
+  (sin shell ni `curl`/`wget`), no se puede hacer con el patrón habitual
+  de `CMD curl -f ...`; en su lugar, el propio binario sabe comprobarse a
+  sí mismo (`lokiviews -healthcheck`, forma exec, sin necesitar shell) —
+  hace un `GET /api/health` contra `127.0.0.1:$PORT` y termina con
+  código `0`/`1`.
+- Manifiestos de ejemplo para Kubernetes (`deploy/k8s/`): Deployment,
+  Service y una plantilla de Secret, con `readOnlyRootFilesystem: true` +
+  un `emptyDir` en `/tmp` (necesario porque la exportación de ciclo de
+  vida completo escribe ahí su fichero temporal), y `livenessProbe`/
+  `readinessProbe` contra `/api/health`.
 - Autocompletado de labels/valores contextual: `/api/labels` y
   `/api/label-values` aceptan un `query=<selector LogQL>` opcional que Loki
   usa para acotar el resultado a lo que realmente coexiste con los

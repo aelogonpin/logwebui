@@ -32,12 +32,15 @@ lokiviews/
 ├── internal/
 │   ├── config/                # lectura y validación de variables de entorno
 │   ├── loki/                  # cliente HTTP de Loki (selector, parseo, limpieza)
+│   ├── mimir/                  # cliente de Mimir para el autodescubrimiento de tenants
 │   └── api/                   # handlers y router HTTP
 ├── web/
 │   ├── index.html
 │   └── static/
 │       ├── css/style.css      # UI en dark mode, sin frameworks externos
 │       └── js/app.js          # buscador, severidad, filtros, descarga .txt
+├── deploy/k8s/                 # manifiestos de ejemplo (Deployment/Service/Secret)
+├── .github/workflows/          # CI (lint+test+build) y Release (publica a GHCR)
 ├── Dockerfile                 # build multi-stage → imagen distroless
 ├── docker-compose.yml
 └── .env.example
@@ -186,6 +189,25 @@ docker run --rm -p 8080:8080 \
   lokiviews:local
 ```
 
+La imagen incluye un `HEALTHCHECK` (`docker inspect --format='{{.State.Health.Status}}' <container>`):
+como la imagen final es `distroless` (sin shell ni `curl`/`wget`), el
+propio binario se comprueba a sí mismo — `lokiviews -healthcheck` hace un
+`GET /api/health` contra `127.0.0.1:$PORT` y termina con código `0`/`1`.
+
+## CI/CD
+
+- **CI** (`.github/workflows/ci.yml`): en cada push/PR corre
+  `golangci-lint`, `go vet`, comprueba formateo con `gofmt`, ejecuta
+  `go test -race ./...`, y construye la imagen Docker (sin publicarla) —
+  solo para detectar roturas pronto, no crea ningún artefacto.
+- **Release** (`.github/workflows/release.yml`): al hacer push de un tag
+  semántico (`vX.Y.Z`), construye y publica la imagen en GHCR
+  (`ghcr.io/aelogonpin/logwebui`) con tags `X.Y.Z`, `X.Y`, `X`, y `latest`.
+  ```bash
+  git tag v1.0.0
+  git push origin v1.0.0
+  ```
+
 ## Uso de la interfaz
 
 1. **Org ID**: indica el `X-Scope-OrgID` del tenant de Loki que quieres
@@ -308,6 +330,12 @@ peor), el cursor puede quedarse "atascado" reobteniendo la última página
 para siempre — el backend detecta esto (misma página repetida) y corta
 la exportación de forma limpia en vez de bucle infinito o archivo lleno
 de líneas duplicadas.
+
+## Despliegue en Kubernetes
+
+Manifiestos de ejemplo (Deployment + Service + Secret) en
+[`deploy/k8s/`](deploy/k8s/) — instrucciones de uso en su propio
+[README](deploy/k8s/README.md).
 
 ## Documentación relacionada
 

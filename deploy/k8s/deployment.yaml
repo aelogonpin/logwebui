@@ -1,0 +1,69 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: lokiviews
+  labels:
+    app.kubernetes.io/name: lokiviews
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: lokiviews
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: lokiviews
+    spec:
+      # The runtime image runs as a fixed non-root user already
+      # (gcr.io/distroless/static-debian12:nonroot); this just makes that
+      # an explicit, enforced requirement rather than an implicit default.
+      securityContext:
+        runAsNonRoot: true
+      containers:
+        - name: lokiviews
+          # Pin this to a specific released tag in real deployments
+          # (e.g. ghcr.io/aelogonpin/logwebui:v1.2.3) — :latest here is
+          # just so this manifest works out of the box as an example.
+          image: ghcr.io/aelogonpin/logwebui:latest
+          ports:
+            - name: http
+              containerPort: 8080
+          envFrom:
+            - secretRef:
+                name: lokiviews-env
+          env:
+            - name: PORT
+              value: "8080"
+          livenessProbe:
+            httpGet:
+              path: /api/health
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 15
+          readinessProbe:
+            httpGet:
+              path: /api/health
+              port: http
+            initialDelaySeconds: 3
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: 50m
+              memory: 32Mi
+            limits:
+              cpu: 500m
+              memory: 128Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            # The full-lifecycle export feature writes its temp file via
+            # os.CreateTemp("", ...) — the default OS temp dir (/tmp) —
+            # which needs to be writable even with readOnlyRootFilesystem.
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir: {}

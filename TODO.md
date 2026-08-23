@@ -43,11 +43,19 @@ ni prioridad estricta salvo que se indique.
 
 ## Despliegue / operaciones
 
-- [ ] Pipeline de CI (lint + `go vet` + `go test` + build de imagen Docker).
-- [ ] Publicación de la imagen Docker en un registry (GHCR/Harbor) con tags
-      semánticos.
-- [ ] Healthcheck de Docker (`HEALTHCHECK` en el Dockerfile) apuntando a `/api/health`.
-- [ ] Manifiestos de ejemplo para Kubernetes (Deployment + Service + Secret).
+- [x] Pipeline de CI (lint + `go vet` + `go test` + build de imagen Docker) —
+      `.github/workflows/ci.yml`.
+- [x] Publicación de la imagen Docker en un registry (GHCR) con tags
+      semánticos, al taggear un release — `.github/workflows/release.yml`.
+- [x] Healthcheck de Docker (`HEALTHCHECK` en el Dockerfile) apuntando a
+      `/api/health` — como la imagen final es distroless (sin `curl`/`wget`),
+      el propio binario se comprueba a sí mismo vía `lokiviews -healthcheck`
+      (`cmd/server/main.go`), invocado en forma exec desde el `Dockerfile`.
+- [x] Manifiestos de ejemplo para Kubernetes (Deployment + Service + Secret) —
+      `deploy/k8s/`. Validados con un parser YAML; no probados con
+      `kubectl --dry-run` contra un cluster real (no había ninguno de
+      pruebas a mano) ni con `docker build` real (Docker no estaba
+      disponible en el entorno de desarrollo).
 
 ## Calidad
 
