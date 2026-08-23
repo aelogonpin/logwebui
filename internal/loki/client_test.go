@@ -12,14 +12,14 @@ import (
 func TestBuildSelector(t *testing.T) {
 	t.Run("renders quoted matchers and skips blanks", func(t *testing.T) {
 		got, err := BuildSelector([]LabelMatcher{
-			{Key: "namespace", Value: "clarel-pro", Op: "="},
+			{Key: "namespace", Value: "backend", Op: "="},
 			{Key: "pod", Value: "api-.*", Op: "=~"},
 			{Key: "", Value: "ignored"},
 		})
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
-		want := `{namespace="clarel-pro", pod=~"api-.*"}`
+		want := `{namespace="backend", pod=~"api-.*"}`
 		if got != want {
 			t.Errorf("got %q, want %q", got, want)
 		}
@@ -88,7 +88,7 @@ func TestClientQueryRange(t *testing.T) {
 				"resultType": "streams",
 				"result": []map[string]interface{}{
 					{
-						"stream": map[string]string{"namespace": "clarel-pro"},
+						"stream": map[string]string{"namespace": "backend"},
 						"values": [][2]string{
 							{"2000", `{"message":"second"}`},
 							{"1000", "first plain line"},
@@ -102,10 +102,10 @@ func TestClientQueryRange(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	client := NewClient(srv.URL, "admin", "secret", "Clarel-pro")
+	client := NewClient(srv.URL, "admin", "secret", "acme-prod")
 
 	entries, err := client.QueryRange(context.Background(), QueryParams{
-		Matchers: []LabelMatcher{{Key: "namespace", Value: "clarel-pro", Op: "="}},
+		Matchers: []LabelMatcher{{Key: "namespace", Value: "backend", Op: "="}},
 		Limit:    100,
 	})
 	if err != nil {
@@ -115,8 +115,8 @@ func TestClientQueryRange(t *testing.T) {
 	if !capturedOK || capturedAuthUser != "admin" {
 		t.Errorf("expected basic auth user 'admin', got ok=%v user=%q", capturedOK, capturedAuthUser)
 	}
-	if capturedOrgID != "Clarel-pro" {
-		t.Errorf("expected X-Scope-OrgID 'Clarel-pro', got %q", capturedOrgID)
+	if capturedOrgID != "acme-prod" {
+		t.Errorf("expected X-Scope-OrgID 'acme-prod', got %q", capturedOrgID)
 	}
 	if !strings.HasPrefix(capturedPath, "/loki/api/v1/query_range?") {
 		t.Errorf("unexpected request path: %s", capturedPath)
@@ -131,7 +131,7 @@ func TestClientQueryRange(t *testing.T) {
 	if entries[1].Timestamp != "2000" || entries[1].Line != "second" {
 		t.Errorf("expected extracted message 'second', got %+v", entries[1])
 	}
-	if entries[0].Labels["namespace"] != "clarel-pro" {
+	if entries[0].Labels["namespace"] != "backend" {
 		t.Errorf("expected stream labels to be attached, got %+v", entries[0].Labels)
 	}
 }

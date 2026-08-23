@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/eloygonzalezdeiris/lokiviews/internal/loki"
+	"github.com/eloygonzalezdeiris/lokiviews/internal/mimir"
 )
 
 const (
@@ -20,14 +21,18 @@ type Handlers struct {
 	loki             *loki.Client
 	defaultLokiOrgID string
 	exports          *exportStore
+	// mimir is nil unless MIMIR_URL is configured, which disables the
+	// tenant-autodiscover feature entirely (see Tenants and Config below).
+	mimir *mimir.Client
 }
 
 // NewHandlers builds a Handlers bound to the given Loki client.
 // defaultLokiOrgID (from LOKI_ORG_ID, optional) is only exposed via
 // /api/config so the frontend can pre-fill the Org ID field; it is never
-// enforced server-side.
-func NewHandlers(c *loki.Client, defaultLokiOrgID string) *Handlers {
-	return &Handlers{loki: c, defaultLokiOrgID: defaultLokiOrgID, exports: newExportStore()}
+// enforced server-side. mimirClient may be nil to disable tenant
+// autodiscovery.
+func NewHandlers(c *loki.Client, defaultLokiOrgID string, mimirClient *mimir.Client) *Handlers {
+	return &Handlers{loki: c, defaultLokiOrgID: defaultLokiOrgID, exports: newExportStore(), mimir: mimirClient}
 }
 
 type queryRequest struct {
@@ -134,12 +139,33 @@ func (h *Handlers) LabelValues(w http.ResponseWriter, r *http.Request) {
 }
 
 // Config handles GET /api/config, exposing non-secret runtime defaults the
-// frontend needs — currently just the optional LOKI_ORG_ID fallback used
-// to pre-fill the Org ID field.
+// frontend needs: the optional LOKI_ORG_ID fallback used to pre-fill the
+// Org ID field, and whether tenant autodiscovery (MIMIR_URL) is available.
 func (h *Handlers) Config(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"defaultOrgId": h.defaultLokiOrgID,
+		"mimirEnabled": h.mimir != nil,
 	})
+}
+
+// Tenants handles GET /api/tenants: lists Loki Org IDs that have recently
+// sent logs, by reading the "tenant" label off Loki's own self-monitoring
+// metrics back from Mimir. 404s when MIMIR_URL isn't configured.
+func (h *Handlers) Tenants(w http.ResponseWriter, r *http.Request) {
+	if h.mimir == nil {
+		writeError(w, http.StatusNotFound, "tenant autodiscovery is not configured (set MIMIR_URL to enable it)")
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), metaTimeout)
+	defer cancel()
+
+	tenants, err := h.mimir.Tenants(ctx)
+	if err != nil {
+		writeError(w, http.StatusBadGateway, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{"tenants": tenants})
 }
 
 // Health handles GET /api/health for container/orchestrator liveness checks.

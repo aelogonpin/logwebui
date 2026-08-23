@@ -22,7 +22,7 @@ type labelsResponse struct {
 	Data   []string `json:"data"`
 }
 
-// LabelMatcher is one stream-selector matcher, e.g. namespace="clarel-pro".
+// LabelMatcher is one stream-selector matcher, e.g. namespace="backend".
 type LabelMatcher struct {
 	Key   string `json:"key"`
 	Value string `json:"value"`

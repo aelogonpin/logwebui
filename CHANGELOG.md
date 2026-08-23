@@ -50,6 +50,21 @@ y este proyecto usa [Versionado Semántico](https://semver.org/lang/es/).
 - Panel de búsqueda reordenado (Org ID → Rango de tiempo → Labels →
   Límite y orden), ya que el autocompletado depende del rango elegido, y
   con iconos discretos por sección para un aspecto más cuidado.
+- Autodescubrimiento opcional de Org IDs: si se configura `MIMIR_URL`
+  (además de `MIMIR_USER`/`MIMIR_PASS` y, si aplica, `MIMIR_ORG_ID`),
+  aparece un botón "Descubrir tenants" junto al campo Org ID que consulta
+  a Mimir el label `tenant` de las métricas propias de Loki
+  (`loki_distributor_bytes_received_total`) y ofrece los resultados como
+  desplegable — sin dejar de poder escribir un Org ID a mano. Sin
+  `MIMIR_URL` la función no existe: el botón ni se muestra y
+  `/api/tenants` responde `404`. Loki no tiene una API para listar sus
+  propios tenants; esta es la única vía indirecta real (leer sus métricas
+  de vuelta desde el sistema de monitorización). Sin `MIMIR_URL`, el
+  desplegable de sugerencias del campo Org ID tampoco se conecta en
+  absoluto (ni siquiera se crea en el DOM) — antes se enganchaba siempre,
+  así que un `MIMIR_URL` sin configurar aún así mostraba un desplegable
+  vacío ("Sin coincidencias") al hacer foco en el campo, una pista visual
+  innecesaria de que existe esta lógica aunque esté apagada.
 
 ### Cambiado
 
@@ -80,6 +95,29 @@ y este proyecto usa [Versionado Semántico](https://semver.org/lang/es/).
   heredaba `flex: 1` de una clase pensada para compartir una fila con
   otro campo, así que absorbía todo el espacio vertical sobrante del
   panel en vez de ocupar solo su altura natural.
+- El botón "Descubrir tenants" quedaba tapado por el propio desplegable
+  de sugerencias del campo Org ID: como el desplegable es `position:
+  absolute` (fuera del flujo normal), el botón que iba justo después en
+  el HTML terminaba posicionándose en el mismo sitio donde arranca el
+  desplegable, así que un clic que visualmente parecía "fuera" de la
+  lista en realidad caía sobre un ítem oculto detrás y seleccionaba un
+  tenant al azar. Solucionado moviendo el botón (y el texto de error)
+  **antes** del campo en el HTML, para que el desplegable —que solo
+  crece hacia abajo— nunca pueda solaparlo.
+- Ese mismo reordenamiento introdujo otro bug: la `<label>` que envuelve
+  el campo Org ID (sin `for` explícito) pasó a asociarse implícitamente
+  con el **botón** "Descubrir tenants" en vez de con el input, por ser
+  ahora el primer elemento "labelable" dentro de ella — así que un clic
+  en el texto de ayuda o en cualquier hueco de la label (no directamente
+  sobre el input) disparaba el botón oculto en vez de enfocar el campo.
+  Arreglado con `for="orgIdInput"` explícito en la label.
+- El Org ID podía quedar con un valor de una sesión anterior tras
+  recargar la página, incluso sin `LOKI_ORG_ID` configurado: el
+  navegador restaura por su cuenta el último valor escrito en un campo
+  de texto al recargar, y el JS solo sobrescribía ese campo cuando el
+  servidor sí tenía un valor por defecto que precargar. Ahora se limpia
+  siempre, explícitamente, tanto antes de preguntar al servidor como al
+  recibir su respuesta.
 
 ## [1.0.0] - 2026-08-21
 

@@ -16,7 +16,7 @@ exactamente ese token, así que cualquier pipeline de formateo dispara el
 bloqueo.
 
 Para evitarlo, el backend **nunca** construye pipelines LogQL: solo envía
-un *stream selector* plano (`{namespace="clarel-pro", pod=~"api-.*"}`) a
+un *stream selector* plano (`{namespace="backend", pod=~"api-.*"}`) a
 `query_range`. Loki devuelve el JSON "sucio" tal cual, y es Go quien
 extrae el campo `message` (o `msg`/`log`, si el log es JSON estructurado) y
 lo entrega ya limpio al frontend. Ver `internal/loki/client.go`.
@@ -49,6 +49,12 @@ Docker) sin assets sueltos que gestionar.
 
 - Go 1.22+ (solo para desarrollo local; el build de Docker no requiere Go instalado)
 - Un servidor Loki accesible, con Basic Auth y `X-Scope-OrgID` si aplica
+- Opcional, solo para el botón "Descubrir tenants": un Mimir (u otro
+  backend compatible con la API de consulta de Prometheus) accesible, con
+  Basic Auth propia, **que además tenga guardada la métrica
+  `loki_distributor_bytes_received_total`** — ver
+  [Autodescubrimiento de tenants](#autodescubrimiento-de-tenants-mimir)
+  más abajo antes de darlo por sentado.
 
 ## Configuración (12-Factor App)
 
@@ -58,11 +64,14 @@ faltan.
 
 | Variable      | Obligatoria | Descripción                                              | Ejemplo                                      |
 |---------------|:-----------:|-----------------------------------------------------------|-----------------------------------------------|
-| `LOKI_URL`    | Sí          | URL base del servidor Loki                                 | `https://loki.monitoring.seidor-retail.com`  |
+| `LOKI_URL`    | Sí          | URL base del servidor Loki                                 | `https://loki.example.com`                    |
 | `LOKI_USER`   | Sí          | Usuario para Basic Auth                                    | `admin`                                       |
 | `LOKI_PASS`   | Sí          | Contraseña para Basic Auth                                 | `********`                                    |
-| `LOKI_ORG_ID` | No          | Valor por defecto para precargar el campo "Org ID" de la UI | `Clarel-pro`                                  |
+| `LOKI_ORG_ID` | No          | Valor por defecto para precargar el campo "Org ID" de la UI | `acme-prod`                                   |
 | `PORT`        | No          | Puerto HTTP del servidor. Por defecto `8080`                | `8080`                                        |
+| `MIMIR_URL`   | No          | URL base de Mimir. Si se define, activa el botón "Descubrir tenants" (ver más abajo); si se omite, esa función no existe en la UI | `https://mimir.example.com` |
+| `MIMIR_USER` / `MIMIR_PASS` | No (requerido si se define `MIMIR_URL`) | Basic Auth de Mimir — credenciales independientes de `LOKI_USER`/`LOKI_PASS` | `changeme` |
+| `MIMIR_ORG_ID` | No         | `X-Scope-OrgID` que exige Mimir (solo si Mimir es multi-tenant), distinto del org id de Loki | `0` |
 
 **`X-Scope-OrgID` se indica desde la propia interfaz web**, no al arrancar
 el servidor: el panel de búsqueda tiene un campo "Org ID" que se envía con
@@ -77,6 +86,67 @@ Copia `.env.example` a `.env` y rellena tus valores:
 ```bash
 cp .env.example .env
 ```
+
+### Autodescubrimiento de tenants (Mimir)
+
+Loki no tiene ninguna API para listar sus propios tenants. La única vía
+indirecta real es leer, desde el sistema de monitorización, las propias
+métricas que Loki expone de sí mismo (`loki_distributor_bytes_received_total`,
+que trae un label `tenant` por cada Org ID activo). Si ese sistema es un
+Mimir accesible desde donde corre LokiViews, el botón **"Descubrir
+tenants"** automatiza justo eso.
+
+**Lo que hace falta para que funcione, en orden:**
+
+1. `MIMIR_URL`, `MIMIR_USER`, `MIMIR_PASS` configurados (ver tabla de
+   variables arriba). Sin `MIMIR_URL` el botón ni aparece — no hay nada
+   más que comprobar.
+2. Que **alguien esté realmente enviando** las métricas propias de Loki
+   (`loki_distributor_bytes_received_total` y compañía) a ese Mimir. Por
+   defecto, esa métrica solo vive "en caliente" en el `/metrics` de cada
+   pod del distributor de Loki (`loki-write-*` en un despliegue "simple
+   scalable") — si nada la scrapea y remote-writea a Mimir, no está en
+   ningún tenant de Mimir por mucho que la app pregunte bien. Se
+   comprueba con `kubectl exec <pod-loki-write> -- wget -qO- localhost:3100/metrics | grep loki_distributor_bytes_received_total`.
+3. Saber **bajo qué tenant de Mimir** aterrizan esas métricas al
+   escribirse — esto es lo que casi siempre falla, y **no tiene por qué
+   coincidir con el label `tenant` de la propia métrica**. Si delante de
+   Mimir hay un proxy tipo [`cortex-tenant`](https://github.com/blind-oracle/cortex-tenant)
+   (habitual para dar multi-tenancy a un Prometheus que de por sí no la
+   tiene), ese proxy decide el `X-Scope-OrgID` a partir de **una sola
+   label configurable** (`tenant.label` en su config) — que puede ser
+   perfectamente `cluster`, `namespace`, o cualquier otra, no
+   necesariamente `tenant`. `MIMIR_ORG_ID` tiene que ser el *valor* de
+   esa label, no el nombre del tenant de Loki que estás buscando.
+
+**Cómo averiguar el `MIMIR_ORG_ID` correcto si no lo sabes:**
+
+```bash
+# 1. Busca la config del proxy delante de Mimir (si existe) y mira qué
+#    label usa para decidir el tenant, p.ej. en su ConfigMap:
+kubectl get configmap -n <namespace> cortex-tenant-configmap -o yaml
+#    → busca la clave "tenant: label: <algo>"
+
+# 2. Consulta esa label directamente en la fuente real de la métrica
+#    (Prometheus/Grafana Agent que scrapea Loki, no Mimir) para ver su
+#    valor. En la UI web de ese Prometheus, o vía su API:
+#    loki_distributor_bytes_received_total → mira el valor de esa label
+
+# 3. Prueba esa query en Mimir con ese valor como X-Scope-OrgID:
+curl -s -u "$MIMIR_USER:$MIMIR_PASS" -H "X-Scope-OrgID: <valor-del-paso-2>" \
+  --data-urlencode "query=count by (tenant) (loki_distributor_bytes_received_total)" \
+  -G "$MIMIR_URL/prometheus/api/v1/query"
+```
+
+Si esa curl devuelve `"result":[]` (éxito, pero vacío) para **cualquier**
+valor que pruebes de `X-Scope-OrgID`, el problema es el paso 2: la
+métrica simplemente no está en Mimir, y no hay ningún valor de
+`MIMIR_ORG_ID` que la vaya a encontrar — hay que resolverlo en el pipeline
+de scraping/remote-write, no en la configuración de esta app.
+
+`/api/tenants` (y por tanto el botón) siempre responden `200` con lista
+vacía en ese caso, nunca un error — la petición a Mimir es correcta, solo
+que no hay datos que devolver bajo ese tenant.
 
 ## Arrancar en local (sin Docker)
 
@@ -107,19 +177,25 @@ docker compose up --build
 ```bash
 docker build -t lokiviews:local .
 docker run --rm -p 8080:8080 \
-  -e LOKI_URL="https://loki.monitoring.seidor-retail.com" \
+  -e LOKI_URL="https://loki.example.com" \
   -e LOKI_USER="admin" \
   -e LOKI_PASS="secret" \
-  -e LOKI_ORG_ID="Clarel-pro" \
+  -e LOKI_ORG_ID="acme-prod" \
   lokiviews:local
 ```
 
 ## Uso de la interfaz
 
 1. **Org ID**: indica el `X-Scope-OrgID` del tenant de Loki que quieres
-   consultar (ej. `Clarel-pro`). Se envía con cada petición; si
+   consultar (ej. `acme-prod`). Se envía con cada petición; si
    `LOKI_ORG_ID` está definido en el servidor, este campo se precarga con
-   ese valor, pero siempre es editable.
+   ese valor, pero siempre es editable. Si `MIMIR_URL` está configurado,
+   aparece un botón **"Descubrir tenants"** junto al campo: consulta a
+   Mimir el label `tenant` de las métricas propias de Loki
+   (`loki_distributor_bytes_received_total`) y convierte el campo en un
+   desplegable con los Org IDs que realmente tienen datos recientes, sin
+   dejar de poder escribir uno a mano. Sin `MIMIR_URL`, el botón
+   simplemente no aparece.
 2. **Buscador**: añade uno o varios labels (`namespace`, `pod`,
    `service_name`, cualquier label que exponga tu Loki) con su operador
    (`=`, `!=`, `=~`, `!~`) y valor. Los campos ofrecen autocompletado
@@ -175,14 +251,15 @@ docker run --rm -p 8080:8080 \
 | `/api/query`                       | POST   | Consulta logs (ver payload abajo)                             |
 | `/api/export?matchers=<json>&orgId=<org>&lookbackDays=<n>` | GET | Server-Sent Events: exporta el historial completo del selector (ver detalle abajo) |
 | `/api/export/download?id=<id>`     | GET    | Descarga (una sola vez) el archivo generado por `/api/export`  |
+| `/api/tenants`                     | GET    | Lista de Org IDs con datos recientes, vía Mimir. `404` si `MIMIR_URL` no está configurado |
 
 Payload de `/api/query`:
 
 ```json
 {
-  "orgId": "Clarel-pro",
+  "orgId": "acme-prod",
   "matchers": [
-    { "key": "namespace", "value": "clarel-pro", "op": "=" },
+    { "key": "namespace", "value": "backend", "op": "=" },
     { "key": "pod", "value": "api-.*", "op": "=~" }
   ],
   "start": "2026-08-21T00:00:00Z",
@@ -202,7 +279,7 @@ Es un endpoint GET porque `EventSource` (SSE) del navegador solo puede
 hacer GET. `matchers` va como JSON serializado en la propia query string:
 
 ```
-GET /api/export?matchers=[{"key":"pod","op":"=","value":"worker-x"}]&orgId=Clarel-pro&lookbackDays=30
+GET /api/export?matchers=[{"key":"pod","op":"=","value":"worker-x"}]&orgId=acme-prod&lookbackDays=30
 ```
 
 Eventos que emite (formato `event: <nombre>\ndata: <json>\n\n`):

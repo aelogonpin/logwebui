@@ -30,9 +30,16 @@
           <svg class="subtitle-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="6" rx="1.5"/><rect x="2" y="15" width="20" height="6" rx="1.5"/><line x1="6" y1="6" x2="6.01" y2="6"/><line x1="6" y1="18" x2="6.01" y2="18"/></svg>
           Org ID
         </h3>
-        <label class="field org-field">
+        <label class="field org-field" for="orgIdInput">
           <span class="field-hint">X-Scope-OrgID — tenant de Loki a consultar</span>
-          <input type="text" id="orgIdInput" placeholder="ej. Clarel-pro" />
+          <button type="button" class="btn btn-ghost btn-sm" id="discoverTenantsBtn" hidden>
+            <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+            Descubrir tenants
+          </button>
+          <p class="error-text" id="discoverTenantsError" hidden></p>
+          <div class="autocomplete-wrap">
+            <input type="text" id="orgIdInput" placeholder="ej. acme-prod" autocomplete="off" />
+          </div>
         </label>
 
         <div class="divider"></div>
@@ -137,7 +144,7 @@
             ¿El objeto se recrea a menudo (nuevo hash de pod en cada
             despliegue)? Cambia el operador del label a <code>=~</code> y
             usa un patrón que cubra todas sus incarnaciones (ej.
-            <code>comerzzia-admin-.*</code>) para descargar el historial
+            <code>checkout-admin-.*</code>) para descargar el historial
             combinado de todas ellas en una sola exportación, en vez de
             solo la del pod exacto que elijas.
           </p>

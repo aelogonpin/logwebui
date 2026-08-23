@@ -140,7 +140,7 @@ func sseEvents(body string) map[string]string {
 func runExport(t *testing.T, lokiURL string, matchers []loki.LabelMatcher, lookbackDays int) (map[string]string, string) {
 	t.Helper()
 	client := loki.NewClient(lokiURL, "", "", "")
-	h := NewHandlers(client, "")
+	h := NewHandlers(client, "", nil)
 
 	matchersJSON, err := json.Marshal(matchers)
 	if err != nil {

@@ -18,6 +18,17 @@ type Config struct {
 	// the web UI (Loki tenants can vary per request); this only pre-fills
 	// that field when set, it is never enforced as a fixed value.
 	DefaultLokiOrgID string
+
+	// MimirURL enables the "discover tenants" feature when set: the app
+	// queries Mimir for the tenant label on Loki's own self-monitoring
+	// metrics to list which Org IDs actually have data. Entirely optional
+	// and independent from LOKI_*; when empty the feature is hidden.
+	MimirURL  string
+	MimirUser string
+	MimirPass string
+	// MimirOrgID is the X-Scope-OrgID Mimir itself expects (only needed if
+	// Mimir is multi-tenant), separate from any Loki org ID.
+	MimirOrgID string
 }
 
 // Load reads and validates the required environment variables. It fails
@@ -30,6 +41,10 @@ func Load() (*Config, error) {
 		LokiPass:         os.Getenv("LOKI_PASS"),
 		DefaultLokiOrgID: os.Getenv("LOKI_ORG_ID"),
 		Port:             os.Getenv("PORT"),
+		MimirURL:         os.Getenv("MIMIR_URL"),
+		MimirUser:        os.Getenv("MIMIR_USER"),
+		MimirPass:        os.Getenv("MIMIR_PASS"),
+		MimirOrgID:       os.Getenv("MIMIR_ORG_ID"),
 	}
 
 	if cfg.Port == "" {

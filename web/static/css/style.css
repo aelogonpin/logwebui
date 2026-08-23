@@ -129,7 +129,7 @@ body {
 .layout {
   flex: 1;
   display: grid;
-  grid-template-columns: var(--search-panel-w, 340px) 14px 1fr;
+  grid-template-columns: var(--search-panel-w, 400px) 14px 1fr;
   column-gap: 10px;
   padding: 16px;
   min-height: 0;
@@ -248,9 +248,22 @@ body.resizing-panel {
   align-items: center;
 }
 
-.matcher-row .autocomplete-wrap {
+.autocomplete-wrap {
   position: relative;
   min-width: 0;
+}
+
+.org-field #discoverTenantsBtn {
+  /* Placed ABOVE the input in the markup (not below) on purpose: the
+     suggestions dropdown is an absolutely positioned overlay that only
+     ever grows downward from the input, and .autocomplete-wrap doesn't
+     reserve layout space for it (it's out of flow). Anything placed
+     after the wrap in normal flow would end up sitting at roughly the
+     same position the dropdown starts at, causing the two to visually
+     overlap whenever the dropdown is open. Above, there's no such
+     overlap possible. */
+  align-self: flex-start;
+  margin-bottom: 2px;
 }
 
 .matcher-row input,

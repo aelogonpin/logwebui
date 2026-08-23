@@ -57,7 +57,7 @@ type QueryParams struct {
 }
 
 // BuildSelector renders a plain LogQL stream selector such as
-// `{namespace="clarel-pro", pod=~"api-.*"}`. It never appends pipeline
+// `{namespace="backend", pod=~"api-.*"}`. It never appends pipeline
 // stages, so the request body/URL can never contain "{{".
 func BuildSelector(matchers []LabelMatcher) (string, error) {
 	parts := make([]string, 0, len(matchers))

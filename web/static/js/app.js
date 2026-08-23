@@ -39,6 +39,8 @@ const el = {
   searchPanel: document.getElementById("searchPanel"),
   resizeHandle: document.getElementById("resizeHandle"),
   orgIdInput: document.getElementById("orgIdInput"),
+  discoverTenantsBtn: document.getElementById("discoverTenantsBtn"),
+  discoverTenantsError: document.getElementById("discoverTenantsError"),
   matchers: document.getElementById("matchers"),
   addMatcher: document.getElementById("addMatcher"),
   timeModeToggle: document.getElementById("timeModeToggle"),
@@ -323,21 +325,83 @@ async function loadLabelNames(excludeRow) {
   }
 }
 
-async function loadDefaultOrgId() {
+async function loadConfig() {
   try {
     const res = await fetch("/api/config");
     if (!res.ok) return;
     const data = await res.json();
-    if (data.defaultOrgId) {
-      el.orgIdInput.value = data.defaultOrgId;
+    // Always assign (never conditionally): browsers restore a text
+    // input's previous value on reload on their own, independent of any
+    // caching we do (we don't cache the Org ID anywhere — see below).
+    // Only writing this when defaultOrgId is truthy meant a
+    // browser-restored stale value from a PREVIOUS session (e.g. one
+    // where LOKI_ORG_ID/MIMIR_* were set) would silently survive even
+    // after those env vars were removed and the server restarted.
+    el.orgIdInput.value = data.defaultOrgId || "";
+    // Only shown when MIMIR_URL is configured server-side — without it,
+    // /api/tenants 404s, so there's nothing this button could do.
+    el.discoverTenantsBtn.hidden = !data.mimirEnabled;
+    if (data.mimirEnabled) {
+      enableTenantAutocomplete();
     }
   } catch (_) {
-    // No default configured server-side — the field just stays empty.
+    // /api/config itself failed — still clear whatever the browser
+    // restored, same reasoning as above.
+    el.orgIdInput.value = "";
   }
 }
 
 el.orgIdInput.addEventListener("change", () => {
   loadLabelNames();
+});
+
+// ---------- Tenant (Org ID) autodiscovery via Mimir ----------
+//
+// Optional: reads the "tenant" label off Loki's own self-monitoring
+// metrics back from Mimir (see internal/mimir), so the Org ID field can
+// suggest tenants that actually have data instead of being typed blind.
+// Fetched once per click (not automatically) since it's a comparatively
+// heavy query on infra the user may not always have configured.
+
+let discoveredTenants = null;
+let tenantAutocompleteEnabled = false;
+
+// Only wired up once /api/config confirms MIMIR_URL is actually set
+// (see loadConfig above). Attaching this unconditionally would make the
+// Org ID field pop up an (always-empty) "Sin coincidencias" dropdown on
+// focus even with the feature fully disabled server-side — a visible
+// hint that this discovery mechanism exists at all, worth avoiding.
+function enableTenantAutocomplete() {
+  if (tenantAutocompleteEnabled) return;
+  tenantAutocompleteEnabled = true;
+  createAutocomplete(el.orgIdInput, { getOptions: () => discoveredTenants || [] });
+}
+
+el.discoverTenantsBtn.addEventListener("click", async () => {
+  el.discoverTenantsError.hidden = true;
+  el.discoverTenantsBtn.disabled = true;
+  const originalHTML = el.discoverTenantsBtn.innerHTML;
+  el.discoverTenantsBtn.textContent = "Buscando tenants…";
+
+  try {
+    const res = await fetch("/api/tenants");
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || `Error ${res.status}`);
+
+    discoveredTenants = data.tenants || [];
+    if (discoveredTenants.length === 0) {
+      el.discoverTenantsError.textContent = "Mimir no devolvió ningún tenant con datos recientes.";
+      el.discoverTenantsError.hidden = false;
+    } else {
+      el.orgIdInput.focus(); // opens the dropdown via the existing focus handler
+    }
+  } catch (err) {
+    el.discoverTenantsError.textContent = err.message || "No se pudo consultar Mimir.";
+    el.discoverTenantsError.hidden = false;
+  } finally {
+    el.discoverTenantsBtn.disabled = false;
+    el.discoverTenantsBtn.innerHTML = originalHTML;
+  }
 });
 
 // ---------- Time range ----------
@@ -493,7 +557,7 @@ async function runSearch() {
   el.searchError.hidden = true;
 
   if (matchers.length === 0) {
-    el.searchError.textContent = "Añade al menos un label con su valor (ej. namespace = clarel-pro).";
+    el.searchError.textContent = "Añade al menos un label con su valor (ej. namespace = backend).";
     el.searchError.hidden = false;
     return;
   }
@@ -703,7 +767,7 @@ el.downloadBtn.addEventListener("click", () => {
 
 const PANEL_WIDTH_KEY = "lokiviews.searchPanelWidth";
 const PANEL_MIN_WIDTH = 260;
-const PANEL_MAX_WIDTH = 640;
+const PANEL_MAX_WIDTH = 720;
 
 function applyPanelWidth(px) {
   const clamped = Math.min(PANEL_MAX_WIDTH, Math.max(PANEL_MIN_WIDTH, px));
@@ -910,6 +974,13 @@ el.lifecycleExportCancel.addEventListener("click", () => {
 
 // ---------- Init ----------
 
+// Clear immediately, synchronously — before even asking the server for
+// its default — so a value the browser restored from a previous page
+// load (its own "remember what I typed" behavior, nothing this app
+// stores) never has a chance to flash on screen while loadConfig()'s
+// fetch is still in flight.
+el.orgIdInput.value = "";
+
 createMatcherRow("namespace");
-loadDefaultOrgId().then(loadLabelNames);
+loadConfig().then(loadLabelNames);
 initResizablePanel();

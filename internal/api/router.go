@@ -7,12 +7,14 @@ import (
 	"time"
 
 	"github.com/eloygonzalezdeiris/lokiviews/internal/loki"
+	"github.com/eloygonzalezdeiris/lokiviews/internal/mimir"
 )
 
 // NewRouter builds the full HTTP handler: the JSON API under /api/* plus
-// the embedded frontend served as static files at /.
-func NewRouter(client *loki.Client, defaultLokiOrgID string, webFS fs.FS) http.Handler {
-	h := NewHandlers(client, defaultLokiOrgID)
+// the embedded frontend served as static files at /. mimirClient may be
+// nil, which disables /api/tenants (tenant autodiscovery).
+func NewRouter(client *loki.Client, defaultLokiOrgID string, mimirClient *mimir.Client, webFS fs.FS) http.Handler {
+	h := NewHandlers(client, defaultLokiOrgID, mimirClient)
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("/api/health", Health)
@@ -22,6 +24,7 @@ func NewRouter(client *loki.Client, defaultLokiOrgID string, webFS fs.FS) http.H
 	mux.HandleFunc("/api/label-values", h.LabelValues)
 	mux.HandleFunc("/api/export", h.Export)
 	mux.HandleFunc("/api/export/download", h.ExportDownload)
+	mux.HandleFunc("/api/tenants", h.Tenants)
 
 	mux.Handle("/", http.FileServer(http.FS(webFS)))
 
