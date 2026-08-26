@@ -52,6 +52,7 @@
           <div class="mode-toggle" id="timeModeToggle">
             <button type="button" class="mode-btn active" data-mode="quick">Rápido</button>
             <button type="button" class="mode-btn" data-mode="custom">Personalizado</button>
+            <button type="button" class="mode-btn" data-mode="live">Directo</button>
           </div>
 
           <div class="quick-range" id="quickRange">
@@ -75,6 +76,13 @@
               <input type="datetime-local" id="endTime" />
             </label>
           </div>
+
+          <div class="field-row" id="liveStartRow" hidden>
+            <label class="field">
+              <span>Comenzar desde (opcional, vacío = ahora)</span>
+              <input type="datetime-local" id="liveStartTime" />
+            </label>
+          </div>
         </div>
 
         <div class="divider"></div>
@@ -91,31 +99,33 @@
         <div class="divider"></div>
 
         <div class="search-controls" id="limitControls">
-          <h3 class="panel-subtitle">
-            <svg class="subtitle-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="4" y1="21" x2="4" y2="14"/><line x1="4" y1="10" x2="4" y2="3"/><line x1="12" y1="21" x2="12" y2="12"/><line x1="12" y1="8" x2="12" y2="3"/><line x1="20" y1="21" x2="20" y2="16"/><line x1="20" y1="12" x2="20" y2="3"/><line x1="2" y1="14" x2="6" y2="14"/><line x1="10" y1="8" x2="14" y2="8"/><line x1="18" y1="16" x2="22" y2="16"/></svg>
-            Límite y orden
-          </h3>
-          <div class="field-row">
-            <label class="field">
-              <span>Límite de líneas</span>
-              <select id="limitSelect">
-                <option value="100">100</option>
-                <option value="500">500</option>
-                <option value="1000" selected>1000</option>
-                <option value="2000">2000</option>
-                <option value="5000">5000</option>
-                <option value="custom">Personalizado…</option>
-              </select>
-            </label>
-            <label class="field">
-              <span>Orden</span>
-              <select id="directionSelect">
-                <option value="backward" selected>Más recientes primero</option>
-                <option value="forward">Más antiguos primero</option>
-              </select>
-            </label>
+          <div class="search-controls" id="limitFields">
+            <h3 class="panel-subtitle">
+              <svg class="subtitle-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="4" y1="21" x2="4" y2="14"/><line x1="4" y1="10" x2="4" y2="3"/><line x1="12" y1="21" x2="12" y2="12"/><line x1="12" y1="8" x2="12" y2="3"/><line x1="20" y1="21" x2="20" y2="16"/><line x1="20" y1="12" x2="20" y2="3"/><line x1="2" y1="14" x2="6" y2="14"/><line x1="10" y1="8" x2="14" y2="8"/><line x1="18" y1="16" x2="22" y2="16"/></svg>
+              Límite y orden
+            </h3>
+            <div class="field-row">
+              <label class="field">
+                <span>Límite de líneas</span>
+                <select id="limitSelect">
+                  <option value="100">100</option>
+                  <option value="500">500</option>
+                  <option value="1000" selected>1000</option>
+                  <option value="2000">2000</option>
+                  <option value="5000">5000</option>
+                  <option value="custom">Personalizado…</option>
+                </select>
+              </label>
+              <label class="field">
+                <span>Orden</span>
+                <select id="directionSelect">
+                  <option value="backward" selected>Más recientes primero</option>
+                  <option value="forward">Más antiguos primero</option>
+                </select>
+              </label>
+            </div>
+            <input type="number" id="limitCustomInput" class="limit-custom-input" min="1" step="1" placeholder="Nº de líneas (ej. 15000)" hidden />
           </div>
-          <input type="number" id="limitCustomInput" class="limit-custom-input" min="1" step="1" placeholder="Nº de líneas (ej. 15000)" hidden />
 
           <button type="button" class="btn btn-primary btn-block" id="searchBtn">
             <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
@@ -174,6 +184,7 @@
         <div class="viewer-toolbar">
           <div class="toolbar-left">
             <span class="result-count" id="resultCount">Sin resultados todavía</span>
+            <button type="button" class="btn btn-ghost btn-sm autoscroll-toggle active" id="autoScrollToggle" hidden>⏸ Auto-scroll activo</button>
           </div>
           <div class="toolbar-center">
             <button type="button" class="chip sev-chip sev-all active" data-sev="all">Todos</button>
@@ -198,7 +209,13 @@
           <div class="empty-state" id="emptyState">
             <p>Configura una búsqueda y pulsa <strong>Buscar logs</strong> para ver los resultados aquí.</p>
           </div>
+          <div class="older-loader" id="olderLoader" hidden>
+            <span class="spinner"></span>
+            <span>Cargando histórico anterior…</span>
+          </div>
+          <p class="older-end-hint" id="olderEndHint" hidden>No hay más histórico disponible en los últimos 30 días.</p>
           <div class="log-lines" id="logLines" hidden></div>
+          <button type="button" class="jump-to-live-btn" id="jumpToLiveBtn" hidden>↓ Volver al directo</button>
         </div>
       </section>
     </main>

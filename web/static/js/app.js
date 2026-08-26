@@ -14,9 +14,41 @@ const state = {
   textFilter: "",
   searching: false,
   abortController: null,
-  timeMode: "quick", // "quick" | "custom" — mutually exclusive, never both
+  timeMode: "quick", // "quick" | "custom" | "live" — mutually exclusive
   quickMinutes: 1440,
+  live: {
+    eventSource: null,
+    active: false, // a live tail is running (independent of momentary drops)
+    paused: false, // user scrolled away from the bottom — auto-follow suspended
+    reconnectTimer: null,
+    loadingOlder: false,
+    reachedBeginning: false,
+  },
 };
+
+// Buffer caps for Directo (modo live): the soft cap only trims while the
+// user is following along (they're not looking at what gets dropped); the
+// hard cap trims regardless, purely to protect browser memory if "Directo"
+// is left open and scrolled back for a long time. Both enforced client
+// side only — the backend never buffers anything, see internal/api/live.go.
+const LIVE_SOFT_CAP = 20000;
+const LIVE_HARD_CAP = 100000;
+const LIVE_RECONNECT_DELAY_MS = 3000;
+const LIVE_DEFAULT_BACKFILL_MS = 5 * 60 * 1000;
+const LIVE_OLDER_PAGE_SIZE = 500;
+// Expanding lookback windows tried, in order, when paging older history:
+// Loki streams have gaps, so "the 15 minutes right before what's loaded"
+// may well be empty even though older data exists further back.
+const LIVE_OLDER_WINDOWS_MS = [
+  15 * 60 * 1000,
+  60 * 60 * 1000,
+  6 * 60 * 60 * 1000,
+  24 * 60 * 60 * 1000,
+  7 * 24 * 60 * 60 * 1000,
+  30 * 24 * 60 * 60 * 1000,
+];
+const SCROLL_BOTTOM_THRESHOLD_PX = 40;
+const SCROLL_TOP_THRESHOLD_PX = 80;
 
 const SEVERITY_PATTERNS = [
   { level: "error", regex: /\b(ERROR|ERR|FATAL|EXCEPTION|PANIC)\b/i },
@@ -48,6 +80,12 @@ const el = {
   customRangeRow: document.getElementById("customRangeRow"),
   startTime: document.getElementById("startTime"),
   endTime: document.getElementById("endTime"),
+  liveStartRow: document.getElementById("liveStartRow"),
+  liveStartTime: document.getElementById("liveStartTime"),
+  olderLoader: document.getElementById("olderLoader"),
+  olderEndHint: document.getElementById("olderEndHint"),
+  jumpToLiveBtn: document.getElementById("jumpToLiveBtn"),
+  autoScrollToggle: document.getElementById("autoScrollToggle"),
   queryMeta: document.getElementById("queryMeta"),
   limitSelect: document.getElementById("limitSelect"),
   limitCustomInput: document.getElementById("limitCustomInput"),
@@ -65,6 +103,7 @@ const el = {
   connStatus: document.getElementById("connStatus"),
   timeRangeControls: document.getElementById("timeRangeControls"),
   limitControls: document.getElementById("limitControls"),
+  limitFields: document.getElementById("limitFields"),
   lifecycleExportToggle: document.getElementById("lifecycleExportToggle"),
   lifecycleExportPanel: document.getElementById("lifecycleExportPanel"),
   lifecycleLookback: document.getElementById("lifecycleLookback"),
@@ -264,6 +303,14 @@ function currentDiscoveryTimeRange() {
     return { start: round(start.toISOString()), end: round(end.toISOString()) };
   }
 
+  // Directo has no fixed range to resolve — scope discovery to "what's
+  // active right now", same criterion the Rápido mode already uses.
+  if (state.timeMode === "live") {
+    const end = new Date();
+    const start = new Date(end.getTime() - LIVE_DEFAULT_BACKFILL_MS);
+    return { start: round(start.toISOString()), end: round(end.toISOString()) };
+  }
+
   try {
     const range = resolveTimeRange();
     return { start: round(range.start), end: round(range.end) };
@@ -416,13 +463,36 @@ function toLocalInputValue(date) {
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
 }
 
+// Limit/direction don't apply to Directo (the buffer cap is fixed, and
+// entries only ever arrive forward) — reuses the same visual "locked"
+// treatment already used to dim search controls while the lifecycle-export
+// panel is open (setSearchControlsLocked() below), but scoped to
+// #limitFields rather than the whole #limitControls: that outer container
+// also holds searchBtn, and .search-controls.locked sets
+// pointer-events:none on everything except a #searchBtn already showing
+// "Cancelar" — which would make "Iniciar directo" unclickable if the lock
+// were applied there instead.
+function setLimitControlsLocked(locked) {
+  el.limitFields.classList.toggle("locked", locked);
+  [el.limitSelect, el.limitCustomInput, el.directionSelect].forEach((control) => {
+    control.disabled = locked;
+  });
+}
+
 function setTimeMode(mode) {
+  if (state.timeMode === "live" && mode !== "live") {
+    stopLiveTail();
+  }
+
   state.timeMode = mode;
   [...el.timeModeToggle.children].forEach((btn) => {
     btn.classList.toggle("active", btn.dataset.mode === mode);
   });
   el.quickRange.hidden = mode !== "quick";
   el.customRangeRow.hidden = mode !== "custom";
+  el.liveStartRow.hidden = mode !== "live";
+  setLimitControlsLocked(mode === "live");
+  updateSearchBtnForMode();
 
   if (mode === "custom" && !el.startTime.value && !el.endTime.value) {
     // Seed the custom fields with the currently selected quick range so
@@ -439,6 +509,21 @@ el.timeModeToggle.addEventListener("click", (evt) => {
   if (!btn) return;
   setTimeMode(btn.dataset.mode);
 });
+
+// Resolves the optional "Comenzar desde" instant for Directo (null =
+// start now, with a small default backfill applied by runLiveTail), or
+// throws with a user-facing message if it's set but invalid/future-dated.
+function resolveLiveStart() {
+  if (!el.liveStartTime.value) return null;
+  const d = new Date(el.liveStartTime.value);
+  if (Number.isNaN(d.getTime())) {
+    throw new Error("La fecha de 'Comenzar desde' no es válida.");
+  }
+  if (d.getTime() > Date.now()) {
+    throw new Error("'Comenzar desde' no puede estar en el futuro.");
+  }
+  return d.toISOString();
+}
 
 el.quickRange.addEventListener("click", (evt) => {
   const btn = evt.target.closest(".chip");
@@ -635,6 +720,15 @@ async function runSearch() {
 }
 
 el.searchBtn.addEventListener("click", () => {
+  if (state.timeMode === "live") {
+    if (state.live.active) {
+      stopLiveTail();
+      setStatus("idle", "Listo");
+    } else {
+      runLiveTail();
+    }
+    return;
+  }
   if (state.searching) {
     state.abortController?.abort();
   } else {
@@ -642,6 +736,295 @@ el.searchBtn.addEventListener("click", () => {
   }
 });
 el.addMatcher.addEventListener("click", () => createMatcherRow());
+
+// ---------- Live tail (modo Directo) ----------
+//
+// Loki's native tail is a WebSocket endpoint, but this project has zero
+// external dependencies on purpose (see go.mod) and the Go standard
+// library has no WebSocket client — hand-rolling RFC6455 framing just for
+// this would be a lot of protocol code for a small ops tool. Instead the
+// backend (/api/live, internal/api/live.go) polls query_range at a fixed
+// low cadence and relays only the new lines over Server-Sent Events, so
+// each poll is cheap regardless of how long the tail runs.
+//
+// Reconnection is handled here by hand (not via EventSource's built-in
+// retry) so every reconnect attempt can resume from the last entry
+// actually seen instead of replaying from the original start.
+
+function nanosToISO(nanoStr) {
+  const millis = Number(BigInt(nanoStr) / 1000000n);
+  return new Date(millis).toISOString();
+}
+
+function updateSearchBtnForMode() {
+  const isLive = state.timeMode === "live";
+  const running = isLive && state.live.active;
+  el.autoScrollToggle.hidden = !running;
+
+  if (state.searching) return; // a point query is in flight — leave it alone
+  el.searchBtn.classList.toggle("btn-primary", !running);
+  el.searchBtn.classList.toggle("btn-danger", running);
+  el.searchBtnLabel.textContent = running
+    ? "✕ Detener directo"
+    : isLive
+      ? "▶ Iniciar directo"
+      : "Buscar logs";
+}
+
+// Single source of truth for "is Directo auto-following new lines right
+// now", kept in sync across the three ways it can change: scrolling away
+// from / back to the bottom, the explicit toggle button, and the floating
+// "Volver al directo" button — all three funnel through here instead of
+// touching state.live.paused directly, so the toggle's label, the
+// floating button's visibility, and the actual scroll position can never
+// drift out of sync with each other.
+function setLivePaused(paused) {
+  state.live.paused = paused;
+  el.jumpToLiveBtn.hidden = !paused;
+  el.autoScrollToggle.classList.toggle("active", !paused);
+  el.autoScrollToggle.textContent = paused ? "▶ Auto-scroll pausado" : "⏸ Auto-scroll activo";
+  if (!paused) {
+    el.terminal.scrollTop = el.terminal.scrollHeight;
+  }
+}
+
+function stopLiveTail() {
+  if (state.live.eventSource) {
+    state.live.eventSource.close();
+    state.live.eventSource = null;
+  }
+  if (state.live.reconnectTimer) {
+    clearTimeout(state.live.reconnectTimer);
+    state.live.reconnectTimer = null;
+  }
+  state.live.active = false;
+  el.jumpToLiveBtn.hidden = true;
+  updateSearchBtnForMode();
+}
+
+// Caps the in-browser buffer so an unattended Directo tab can't grow
+// without bound — the backend never buffers anything itself (see
+// internal/api/live.go), so this is the only place the cap is enforced.
+function trimLiveBuffer() {
+  const cap = state.live.paused ? LIVE_HARD_CAP : LIVE_SOFT_CAP;
+  const excess = state.entries.length - cap;
+  if (excess <= 0) return;
+  state.entries.splice(0, excess);
+  for (let i = 0; i < excess; i++) {
+    el.logLines.firstElementChild?.remove();
+  }
+}
+
+function appendLiveEntries(newEntries) {
+  if (!newEntries || newEntries.length === 0) return;
+
+  const wasEmpty = state.entries.length === 0;
+  const frag = document.createDocumentFragment();
+  newEntries.forEach((e) => {
+    const entry = { ...e, level: detectSeverity(e.line) };
+    state.entries.push(entry);
+    frag.appendChild(buildLogLineEl(entry));
+  });
+  el.logLines.appendChild(frag);
+
+  if (wasEmpty) {
+    el.emptyState.hidden = true;
+    el.logLines.hidden = false;
+  }
+
+  trimLiveBuffer();
+  applyFilters();
+
+  if (!state.live.paused) {
+    el.terminal.scrollTop = el.terminal.scrollHeight;
+  }
+}
+
+function connectLive(matchers, orgId, sinceIso) {
+  const qs = new URLSearchParams();
+  qs.set("matchers", JSON.stringify(matchers));
+  if (orgId) qs.set("orgId", orgId);
+  if (sinceIso) qs.set("start", sinceIso);
+
+  const es = new EventSource(`/api/live?${qs.toString()}`);
+  state.live.eventSource = es;
+
+  const reconnect = () => {
+    if (!state.live.active || state.live.eventSource !== es) return;
+    es.close();
+    setStatus("error", "Reconectando…");
+    const lastEntry = state.entries[state.entries.length - 1];
+    const resumeIso = lastEntry ? nanosToISO(lastEntry.timestamp) : sinceIso;
+    state.live.reconnectTimer = setTimeout(() => {
+      connectLive(matchers, orgId, resumeIso);
+    }, LIVE_RECONNECT_DELAY_MS);
+  };
+
+  es.addEventListener("connected", () => {
+    setStatus("ok", state.live.paused ? "En directo (pausado)" : "En directo");
+  });
+
+  es.addEventListener("heartbeat", () => {
+    if (!state.live.paused) setStatus("ok", "En directo");
+  });
+
+  es.addEventListener("entries", (evt) => {
+    const data = JSON.parse(evt.data);
+    appendLiveEntries(data.entries);
+    if (!state.live.paused) setStatus("ok", "En directo");
+  });
+
+  es.addEventListener("failed", (evt) => {
+    let message = "Error en el directo.";
+    try {
+      message = JSON.parse(evt.data).error || message;
+    } catch (_) {
+      // keep default message
+    }
+    el.searchError.textContent = message;
+    el.searchError.hidden = false;
+    reconnect();
+  });
+
+  es.onerror = () => {
+    if (es.readyState === EventSource.CLOSED) reconnect();
+  };
+}
+
+function runLiveTail() {
+  const matchers = collectMatchers();
+  el.searchError.hidden = true;
+
+  if (matchers.length === 0) {
+    el.searchError.textContent = "Añade al menos un label con su valor (ej. namespace = backend).";
+    el.searchError.hidden = false;
+    return;
+  }
+
+  let sinceIso;
+  try {
+    sinceIso = resolveLiveStart() || new Date(Date.now() - LIVE_DEFAULT_BACKFILL_MS).toISOString();
+  } catch (err) {
+    el.searchError.textContent = err.message;
+    el.searchError.hidden = false;
+    return;
+  }
+
+  stopLiveTail();
+  state.entries = [];
+  state.live.reachedBeginning = false;
+  el.olderEndHint.hidden = true;
+  el.queryMeta.hidden = true;
+  renderLogs();
+  setLivePaused(false);
+
+  state.live.active = true;
+  updateSearchBtnForMode();
+  setStatus("loading", "Conectando…");
+
+  connectLive(matchers, el.orgIdInput.value.trim(), sinceIso);
+}
+
+// ---------- Scroll: auto-follow / pausa, e histórico infinito hacia atrás ----------
+
+el.terminal.addEventListener("scroll", () => {
+  if (state.timeMode !== "live") return;
+
+  const distanceFromBottom = el.terminal.scrollHeight - el.terminal.scrollTop - el.terminal.clientHeight;
+  const atBottom = distanceFromBottom <= SCROLL_BOTTOM_THRESHOLD_PX;
+  if (atBottom && state.live.paused) {
+    setLivePaused(false);
+  } else if (!atBottom && !state.live.paused && state.live.active) {
+    setLivePaused(true);
+  }
+
+  if (el.terminal.scrollTop <= SCROLL_TOP_THRESHOLD_PX) {
+    loadOlderEntries();
+  }
+});
+
+el.jumpToLiveBtn.addEventListener("click", () => setLivePaused(false));
+
+// Manual on/off for auto-follow, independent of scroll position — e.g.
+// freeze the view while sitting at the bottom without having to scroll
+// away first. Scrolling back to the bottom (see listener above) or
+// clicking this again both re-sync state.live.paused the same way.
+el.autoScrollToggle.addEventListener("click", () => setLivePaused(!state.live.paused));
+
+function prependOlderEntries(entries) {
+  const prevScrollHeight = el.terminal.scrollHeight;
+  const prevScrollTop = el.terminal.scrollTop;
+
+  const withLevel = entries.map((e) => ({ ...e, level: detectSeverity(e.line) }));
+  state.entries = withLevel.concat(state.entries);
+
+  const frag = document.createDocumentFragment();
+  withLevel.forEach((entry) => frag.appendChild(buildLogLineEl(entry)));
+  el.logLines.insertBefore(frag, el.logLines.firstChild);
+
+  applyFilters();
+
+  // Keep whatever the user was looking at in the same visual spot instead
+  // of letting the newly-inserted content push it down out of view.
+  el.terminal.scrollTop = prevScrollTop + (el.terminal.scrollHeight - prevScrollHeight);
+}
+
+// Pages further back in history on demand — no new endpoint: reuses
+// POST /api/query exactly like Personalizado does, just walked backward
+// one page at a time. Loki streams have gaps, so the window searched
+// widens (LIVE_OLDER_WINDOWS_MS) until one actually returns something.
+async function loadOlderEntries() {
+  if (state.timeMode !== "live") return;
+  if (state.live.loadingOlder || state.live.reachedBeginning) return;
+  if (state.entries.length === 0) return;
+
+  const matchers = collectMatchers();
+  if (matchers.length === 0) return;
+
+  const endMs = Number(BigInt(state.entries[0].timestamp) / 1000000n);
+  const orgId = el.orgIdInput.value.trim();
+
+  state.live.loadingOlder = true;
+  el.olderLoader.hidden = false;
+
+  try {
+    let found = [];
+    for (const windowMs of LIVE_OLDER_WINDOWS_MS) {
+      const res = await fetch("/api/query", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          matchers,
+          limit: LIVE_OLDER_PAGE_SIZE,
+          direction: "backward",
+          orgId,
+          start: new Date(endMs - windowMs).toISOString(),
+          end: new Date(endMs).toISOString(),
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || `Error ${res.status}`);
+      if ((data.entries || []).length > 0) {
+        found = data.entries;
+        break;
+      }
+    }
+
+    if (found.length === 0) {
+      state.live.reachedBeginning = true;
+      el.olderEndHint.hidden = false;
+      return;
+    }
+
+    prependOlderEntries(found);
+  } catch (err) {
+    el.searchError.textContent = err.message || "No se pudo cargar histórico anterior.";
+    el.searchError.hidden = false;
+  } finally {
+    state.live.loadingOlder = false;
+    el.olderLoader.hidden = true;
+  }
+}
 
 // ---------- Rendering & filtering ----------
 
@@ -663,6 +1046,28 @@ function escapeHtml(str) {
   }[c]));
 }
 
+function buildLogLineEl(entry) {
+  const row = document.createElement("div");
+  row.className = `log-line level-${entry.level}`;
+  row.dataset.level = entry.level;
+  row.dataset.text = entry.line.toLowerCase();
+
+  const ts = document.createElement("span");
+  ts.className = "ts";
+  ts.textContent = formatTimestamp(entry.timestamp);
+
+  const badge = document.createElement("span");
+  badge.className = "badge";
+  badge.textContent = entry.level === "unknown" ? "LOG" : entry.level.toUpperCase();
+
+  const msg = document.createElement("span");
+  msg.className = "msg";
+  msg.textContent = entry.line;
+
+  row.append(ts, badge, msg);
+  return row;
+}
+
 function renderLogs() {
   if (state.entries.length === 0) {
     el.emptyState.hidden = false;
@@ -677,27 +1082,7 @@ function renderLogs() {
   el.logLines.hidden = false;
 
   const frag = document.createDocumentFragment();
-  state.entries.forEach((entry) => {
-    const row = document.createElement("div");
-    row.className = `log-line level-${entry.level}`;
-    row.dataset.level = entry.level;
-    row.dataset.text = entry.line.toLowerCase();
-
-    const ts = document.createElement("span");
-    ts.className = "ts";
-    ts.textContent = formatTimestamp(entry.timestamp);
-
-    const badge = document.createElement("span");
-    badge.className = "badge";
-    badge.textContent = entry.level === "unknown" ? "LOG" : entry.level.toUpperCase();
-
-    const msg = document.createElement("span");
-    msg.className = "msg";
-    msg.textContent = entry.line;
-
-    row.append(ts, badge, msg);
-    frag.appendChild(row);
-  });
+  state.entries.forEach((entry) => frag.appendChild(buildLogLineEl(entry)));
 
   el.logLines.innerHTML = "";
   el.logLines.appendChild(frag);

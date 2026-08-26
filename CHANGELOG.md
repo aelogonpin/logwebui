@@ -7,7 +7,29 @@ y este proyecto usa [Versionado Semántico](https://semver.org/lang/es/).
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-08-26
+
 ### Añadido
+
+- Nuevo modo de búsqueda **Directo**, junto a Rápido/Personalizado: hace
+  tail en vivo del selector de labels elegido (nunca de todo el tenant),
+  con auto-scroll que se pausa solo al desplazarse hacia atrás a leer
+  histórico (con botón flotante "Volver al directo" para retomarlo, y un
+  interruptor propio "Auto-scroll activo/pausado" para activarlo o
+  desactivarlo a voluntad sin depender de la posición del scroll), scroll
+  infinito hacia atrás sin límite de líneas fijo, y una sub-opción
+  "Comenzar desde" para arrancar el directo en un instante concreto en
+  vez de siempre desde "ahora". Backend nuevo: `GET /api/live`
+  (`internal/api/live.go`), que hace polling de baja frecuencia (5s) sobre
+  el `query_range` ya existente y retransmite solo las líneas nuevas por
+  Server-Sent Events — se descartó el `tail` nativo de Loki por WebSocket
+  para no añadir la primera dependencia externa del proyecto (`go.mod`
+  sigue sin ninguna). El histórico hacia atrás no usa endpoint nuevo:
+  reutiliza `POST /api/query` con `direction=backward`, igual que el modo
+  Personalizado. El directo vive enteramente atado a la conexión SSE
+  abierta desde el navegador: no hay ningún estado ni búfer en el
+  servidor, así que cerrar la pestaña o cambiar de modo lo termina sin
+  dejar nada corriendo de fondo.
 
 - Pipeline de CI en GitHub Actions (`.github/workflows/ci.yml`): en cada
   push/PR corre `golangci-lint`, `go vet`, comprueba formateo con
@@ -137,6 +159,17 @@ y este proyecto usa [Versionado Semántico](https://semver.org/lang/es/).
   siempre, explícitamente, tanto antes de preguntar al servidor como al
   recibir su respuesta.
 
+### Corregido
+
+- Modo Directo: el cursor de sondeo podía adelantarse a "ahora mismo" en
+  un ciclo sin líneas nuevas, así que una línea que tardara unos segundos
+  en quedar indexada en Loki (lag normal de shippers como
+  Promtail/Fluent Bit/Vector, que agrupan líneas antes de enviarlas)
+  quedaba con un timestamp anterior al nuevo cursor y se perdía para
+  siempre. Ahora el cursor nunca avanza más allá de 10s por detrás del
+  tiempo real, dando margen a que la ingesta termine de asentarse antes
+  de darla por "ya vista".
+
 ## [1.0.0] - 2026-08-21
 
 ### Añadido
@@ -164,4 +197,5 @@ y este proyecto usa [Versionado Semántico](https://semver.org/lang/es/).
 - Suite de tests unitarios para el cliente de Loki (construcción de
   selector, extracción de mensajes, cabeceras, orden cronológico).
 
+[1.1.0]: https://github.com/aelogonpin/logwebui/releases/tag/v1.1.0
 [1.0.0]: https://github.com/eloygonzalezdeiris/lokiviews/releases/tag/v1.0.0

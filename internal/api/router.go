@@ -24,6 +24,7 @@ func NewRouter(client *loki.Client, defaultLokiOrgID string, mimirClient *mimir.
 	mux.HandleFunc("/api/label-values", h.LabelValues)
 	mux.HandleFunc("/api/export", h.Export)
 	mux.HandleFunc("/api/export/download", h.ExportDownload)
+	mux.HandleFunc("/api/live", h.LiveTail)
 	mux.HandleFunc("/api/tenants", h.Tenants)
 
 	mux.Handle("/", http.FileServer(http.FS(webFS)))
