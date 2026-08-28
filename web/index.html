@@ -16,9 +16,15 @@
           <p class="brand-sub">Log Downloader &amp; Viewer</p>
         </div>
       </div>
-      <div class="status" id="connStatus">
-        <span class="dot dot-idle"></span>
-        <span class="status-text">Listo</span>
+      <div class="header-right">
+        <label class="tz-picker" for="timezoneSelect">
+          <svg class="subtitle-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><polyline points="12 7 12 12 15.5 14"/></svg>
+          <select id="timezoneSelect"></select>
+        </label>
+        <div class="status" id="connStatus">
+          <span class="dot dot-idle"></span>
+          <span class="status-text">Listo</span>
+        </div>
       </div>
     </header>
 
@@ -76,6 +82,7 @@
               <input type="datetime-local" id="endTime" />
             </label>
           </div>
+          <p class="field-hint tz-active-hint" id="tzHintCustom" hidden></p>
 
           <div class="field-row" id="liveStartRow" hidden>
             <label class="field">
@@ -83,6 +90,7 @@
               <input type="datetime-local" id="liveStartTime" />
             </label>
           </div>
+          <p class="field-hint tz-active-hint" id="tzHintLive" hidden></p>
         </div>
 
         <div class="divider"></div>

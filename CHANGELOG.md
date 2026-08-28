@@ -7,6 +7,19 @@ y este proyecto usa [Versionado Semántico](https://semver.org/lang/es/).
 
 ## [Unreleased]
 
+### Añadido
+
+- Selector global de zona horaria en la cabecera (estilo Grafana):
+  Navegador (local), UTC, o cualquier zona IANA. Afecta a los timestamps
+  mostrados en cada línea de log, al rango mostrado en el panel de
+  resultados, y a la interpretación de los campos "Desde"/"Hasta" y
+  "Comenzar desde" — todo se muestra e introduce en la zona elegida en
+  vez de asumir siempre la del navegador. Se recuerda entre sesiones
+  (`localStorage`) y, al cambiar de zona, tanto los datos ya mostrados
+  como los campos de fecha ya rellenados se recalculan sin perder el
+  instante real seleccionado. Implementado sin dependencias nuevas,
+  apoyándose solo en `Intl.DateTimeFormat`.
+
 ## [1.1.0] - 2026-08-26
 
 ### Añadido

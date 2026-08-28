@@ -16,6 +16,8 @@ const state = {
   abortController: null,
   timeMode: "quick", // "quick" | "custom" | "live" — mutually exclusive
   quickMinutes: 1440,
+  timezone: "browser", // "browser" | "UTC" | any IANA zone name — display/input zone, set below
+  lastQueryMeta: null, // re-rendered when the timezone changes, see renderQueryMeta()
   live: {
     eventSource: null,
     active: false, // a live tail is running (independent of momentary drops)
@@ -82,6 +84,8 @@ const el = {
   endTime: document.getElementById("endTime"),
   liveStartRow: document.getElementById("liveStartRow"),
   liveStartTime: document.getElementById("liveStartTime"),
+  tzHintCustom: document.getElementById("tzHintCustom"),
+  tzHintLive: document.getElementById("tzHintLive"),
   olderLoader: document.getElementById("olderLoader"),
   olderEndHint: document.getElementById("olderEndHint"),
   jumpToLiveBtn: document.getElementById("jumpToLiveBtn"),
@@ -101,6 +105,7 @@ const el = {
   freeFilter: document.getElementById("freeFilter"),
   downloadBtn: document.getElementById("downloadBtn"),
   connStatus: document.getElementById("connStatus"),
+  timezoneSelect: document.getElementById("timezoneSelect"),
   timeRangeControls: document.getElementById("timeRangeControls"),
   limitControls: document.getElementById("limitControls"),
   limitFields: document.getElementById("limitFields"),
@@ -114,6 +119,215 @@ const el = {
   lifecycleExportCancel: document.getElementById("lifecycleExportCancel"),
   lifecycleExportError: document.getElementById("lifecycleExportError"),
 };
+
+// ---------- Timezone ----------
+//
+// Grafana-style global timezone picker: everything shown or typed as a
+// wall-clock time (the per-line badges, "rango:" in the query meta, and
+// the Desde/Hasta/"Comenzar desde" datetime-local fields) is interpreted
+// in this single zone instead of always assuming the browser's own zone,
+// so a UTC-only Loki tenant or a team in another timezone doesn't have to
+// convert by hand. The backend is untouched — it only ever sees/returns
+// UTC instants (RFC3339); this is purely a client-side display/input
+// concern.
+//
+// No date library: the project has zero external dependencies on
+// purpose (see go.mod), and Intl.DateTimeFormat already supports
+// arbitrary IANA zones natively in every evergreen browser, so
+// implementing the (well-known) two-pass wall-clock<->UTC conversion
+// below is cheaper than pulling one in.
+
+const TIMEZONE_STORAGE_KEY = "lokiviews.timezone";
+
+function loadStoredTimezone() {
+  try {
+    return localStorage.getItem(TIMEZONE_STORAGE_KEY) || "browser";
+  } catch (_) {
+    return "browser";
+  }
+}
+
+// undefined means "let the runtime use its own local zone" — the exact
+// pre-existing behavior of plain Date/toLocaleString calls, kept as the
+// default so nothing changes for anyone who never touches the picker.
+function effectiveTimeZone() {
+  return state.timezone === "browser" ? undefined : state.timezone;
+}
+
+function timezoneDisplayLabel() {
+  if (state.timezone === "browser") {
+    try {
+      return `navegador (${Intl.DateTimeFormat().resolvedOptions().timeZone})`;
+    } catch (_) {
+      return "navegador";
+    }
+  }
+  return state.timezone;
+}
+
+// How far `timeZone`'s wall clock is ahead of UTC, in ms, at the instant
+// `date` (e.g. Europe/Madrid in August is CEST, UTC+2, so +7200000).
+function tzOffsetMs(date, timeZone) {
+  const dtf = new Intl.DateTimeFormat("en-US", {
+    timeZone, hourCycle: "h23",
+    year: "numeric", month: "2-digit", day: "2-digit",
+    hour: "2-digit", minute: "2-digit", second: "2-digit",
+  });
+  const p = Object.fromEntries(dtf.formatToParts(date).map((x) => [x.type, x.value]));
+  const asUtc = Date.UTC(+p.year, +p.month - 1, +p.day, +p.hour, +p.minute, +p.second);
+  return asUtc - date.getTime();
+}
+
+// Converts wall-clock components (as typed by a user, meant to be read in
+// `timeZone`) into the Date representing that actual instant. Two passes:
+// right around a DST transition the offset at the first guess can differ
+// from the offset at the corrected instant, so the second pass re-derives
+// it from the corrected instant instead of trusting the first one blindly.
+function zonedTimeToUtc(y, mo, d, h, mi, s, timeZone) {
+  const guess = Date.UTC(y, mo - 1, d, h, mi, s);
+  const corrected = guess - tzOffsetMs(new Date(guess), timeZone);
+  return new Date(guess - tzOffsetMs(new Date(corrected), timeZone));
+}
+
+// Parses a <input type="datetime-local"> value ("YYYY-MM-DDTHH:MM"),
+// interpreting it as wall-clock time in `timeZone` (undefined = browser's
+// own local zone, i.e. the pre-existing `new Date(value)` behavior).
+function parseZonedInputValue(value, timeZone) {
+  if (!value) return null;
+  const [datePart, timePart] = value.split("T");
+  const [y, mo, d] = datePart.split("-").map(Number);
+  const [h, mi] = (timePart || "00:00").split(":").map(Number);
+  if (!timeZone) return new Date(y, mo - 1, d, h, mi, 0, 0);
+  return zonedTimeToUtc(y, mo, d, h, mi, 0, timeZone);
+}
+
+// Inverse of parseZonedInputValue: formats an absolute instant as the
+// "YYYY-MM-DDTHH:MM" wall-clock it corresponds to in `timeZone`, for
+// populating a datetime-local input.
+function toZonedInputValue(date, timeZone) {
+  if (!timeZone) return toLocalInputValue(date);
+  const dtf = new Intl.DateTimeFormat("en-US", {
+    timeZone, hourCycle: "h23",
+    year: "numeric", month: "2-digit", day: "2-digit",
+    hour: "2-digit", minute: "2-digit",
+  });
+  const p = Object.fromEntries(dtf.formatToParts(date).map((x) => [x.type, x.value]));
+  return `${p.year}-${p.month}-${p.day}T${p.hour}:${p.minute}`;
+}
+
+// Formats an absolute instant as HH:MM:SS.mmm in `timeZone` (undefined =
+// browser local), for the per-line timestamp badge.
+function formatTimeInZone(date, timeZone) {
+  const pad = (n) => String(n).padStart(2, "0");
+  if (!timeZone) {
+    return `${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}.${String(date.getMilliseconds()).padStart(3, "0")}`;
+  }
+  const dtf = new Intl.DateTimeFormat("en-GB", {
+    timeZone, hourCycle: "h23",
+    hour: "2-digit", minute: "2-digit", second: "2-digit",
+  });
+  const p = Object.fromEntries(dtf.formatToParts(date).map((x) => [x.type, x.value]));
+  return `${p.hour}:${p.minute}:${p.second}.${String(date.getMilliseconds()).padStart(3, "0")}`;
+}
+
+// Common zones covering most timezone offsets, used only as a fallback
+// for browsers without Intl.supportedValuesOf (Safari < 15.4) — everyone
+// else gets the full IANA list straight from the runtime.
+const FALLBACK_TIMEZONES = [
+  "Europe/Madrid", "Europe/London", "Europe/Paris", "Europe/Berlin", "Europe/Lisbon",
+  "America/New_York", "America/Chicago", "America/Denver", "America/Los_Angeles",
+  "America/Mexico_City", "America/Bogota", "America/Sao_Paulo", "America/Argentina/Buenos_Aires",
+  "Asia/Tokyo", "Asia/Shanghai", "Asia/Kolkata", "Asia/Dubai", "Asia/Singapore",
+  "Australia/Sydney", "Pacific/Auckland",
+];
+
+function initTimezoneSelect() {
+  const makeOption = (value, label) => {
+    const opt = document.createElement("option");
+    opt.value = value;
+    opt.textContent = label;
+    return opt;
+  };
+
+  let browserLabel = "Navegador (zona local)";
+  try {
+    browserLabel = `Navegador (${Intl.DateTimeFormat().resolvedOptions().timeZone})`;
+  } catch (_) {
+    // keep generic label
+  }
+  el.timezoneSelect.appendChild(makeOption("browser", browserLabel));
+  el.timezoneSelect.appendChild(makeOption("UTC", "UTC"));
+
+  let zones = [];
+  try {
+    zones = typeof Intl.supportedValuesOf === "function" ? Intl.supportedValuesOf("timeZone") : [];
+  } catch (_) {
+    zones = [];
+  }
+  if (zones.length === 0) zones = FALLBACK_TIMEZONES;
+
+  const group = document.createElement("optgroup");
+  group.label = "Otras zonas";
+  zones
+    .filter((z) => z !== "UTC")
+    .sort()
+    .forEach((z) => group.appendChild(makeOption(z, z)));
+  el.timezoneSelect.appendChild(group);
+
+  state.timezone = loadStoredTimezone();
+  el.timezoneSelect.value = state.timezone;
+  if (el.timezoneSelect.value !== state.timezone) {
+    // Stored zone isn't in this browser's list — fall back rather than
+    // silently keep a selection the <select> can't actually represent.
+    state.timezone = "browser";
+    el.timezoneSelect.value = "browser";
+  }
+  updateTzHints();
+}
+
+// Small reminder under the datetime-local fields of which zone their
+// typed values are read in — the fields themselves are plain
+// "YYYY-MM-DDTHH:MM" with no zone indicator of their own, so without this
+// it's easy to forget which zone a value you typed a while ago means.
+function updateTzHints() {
+  const text = `Hora introducida en: ${timezoneDisplayLabel()}`;
+  el.tzHintCustom.textContent = text;
+  el.tzHintCustom.hidden = state.timeMode !== "custom";
+  el.tzHintLive.textContent = text;
+  el.tzHintLive.hidden = state.timeMode !== "live";
+}
+
+el.timezoneSelect.addEventListener("change", () => {
+  const oldTz = effectiveTimeZone();
+  const newTzValue = el.timezoneSelect.value;
+  const newTz = newTzValue === "browser" ? undefined : newTzValue;
+
+  // Re-interpret whatever is currently typed in the datetime-local fields
+  // under the OLD zone, then re-render it as it appears in the NEW zone,
+  // so the switch preserves the actual instant selected instead of
+  // silently reinterpreting the same digits under a different zone.
+  [el.startTime, el.endTime, el.liveStartTime].forEach((input) => {
+    if (!input.value) return;
+    const instant = parseZonedInputValue(input.value, oldTz);
+    if (instant) input.value = toZonedInputValue(instant, newTz);
+  });
+
+  state.timezone = newTzValue;
+  try {
+    localStorage.setItem(TIMEZONE_STORAGE_KEY, newTzValue);
+  } catch (_) {
+    // best-effort only — a private-browsing tab just won't remember it
+  }
+
+  updateTzHints();
+
+  // Re-render whatever's already on screen so the switch is visible
+  // immediately, without forcing a new search.
+  if (state.entries.length > 0) renderLogs();
+  if (state.lastQueryMeta) renderQueryMeta(state.lastQueryMeta);
+});
+
+initTimezoneSelect();
 
 const labelNamesCacheByOrg = new Map();
 const labelValuesCache = new Map(); // key: `${orgId}::${labelName}`
@@ -493,14 +707,16 @@ function setTimeMode(mode) {
   el.liveStartRow.hidden = mode !== "live";
   setLimitControlsLocked(mode === "live");
   updateSearchBtnForMode();
+  updateTzHints();
 
   if (mode === "custom" && !el.startTime.value && !el.endTime.value) {
     // Seed the custom fields with the currently selected quick range so
     // switching modes doesn't present an empty, ambiguous range.
     const end = new Date();
     const start = new Date(end.getTime() - state.quickMinutes * 60 * 1000);
-    el.startTime.value = toLocalInputValue(start);
-    el.endTime.value = toLocalInputValue(end);
+    const tz = effectiveTimeZone();
+    el.startTime.value = toZonedInputValue(start, tz);
+    el.endTime.value = toZonedInputValue(end, tz);
   }
 }
 
@@ -515,8 +731,8 @@ el.timeModeToggle.addEventListener("click", (evt) => {
 // throws with a user-facing message if it's set but invalid/future-dated.
 function resolveLiveStart() {
   if (!el.liveStartTime.value) return null;
-  const d = new Date(el.liveStartTime.value);
-  if (Number.isNaN(d.getTime())) {
+  const d = parseZonedInputValue(el.liveStartTime.value, effectiveTimeZone());
+  if (!d || Number.isNaN(d.getTime())) {
     throw new Error("La fecha de 'Comenzar desde' no es válida.");
   }
   if (d.getTime() > Date.now()) {
@@ -544,9 +760,10 @@ function resolveTimeRange() {
   if (!el.startTime.value || !el.endTime.value) {
     throw new Error("En modo Personalizado, rellena tanto 'Desde' como 'Hasta'.");
   }
+  const tz = effectiveTimeZone();
   return {
-    start: new Date(el.startTime.value).toISOString(),
-    end: new Date(el.endTime.value).toISOString(),
+    start: parseZonedInputValue(el.startTime.value, tz).toISOString(),
+    end: parseZonedInputValue(el.endTime.value, tz).toISOString(),
   };
 }
 
@@ -616,7 +833,19 @@ function setLoading(isLoading) {
   }
 }
 
+function formatRangeLocal(isoStr) {
+  if (!isoStr) return "?";
+  const d = new Date(isoStr);
+  if (Number.isNaN(d.getTime())) return isoStr;
+  return d.toLocaleString("es-ES", {
+    timeZone: effectiveTimeZone(),
+    day: "2-digit", month: "2-digit", year: "numeric",
+    hour: "2-digit", minute: "2-digit", second: "2-digit",
+  });
+}
+
 function renderQueryMeta(meta) {
+  state.lastQueryMeta = meta || null;
   if (!meta) {
     el.queryMeta.hidden = true;
     return;
@@ -624,10 +853,15 @@ function renderQueryMeta(meta) {
   const emptyNote = meta.count === 0
     ? `<span class="meta-empty">⚠ 0 resultados — revisa Org ID, labels o rango.</span>\n`
     : "";
+  // meta.start/end vienen del backend en UTC (RFC3339). Se muestran en la
+  // zona elegida en el selector de cabecera (igual que los timestamps de
+  // cada línea y los campos de fecha del formulario) para que el rango
+  // visible coincida con lo que se pidió, en vez de forzar al usuario a
+  // convertir zonas mentalmente.
   el.queryMeta.innerHTML =
     `${emptyNote}query: ${escapeHtml(meta.query || "(sin selector)")}\n` +
     `orgId: ${escapeHtml(meta.orgId || "(vacío — sin cabecera X-Scope-OrgID)")}\n` +
-    `rango: ${escapeHtml(meta.start || "?")} → ${escapeHtml(meta.end || "?")}`;
+    `rango: ${escapeHtml(formatRangeLocal(meta.start))} → ${escapeHtml(formatRangeLocal(meta.end))} (zona: ${escapeHtml(timezoneDisplayLabel())})`;
   el.queryMeta.hidden = false;
 }
 
@@ -1031,9 +1265,7 @@ async function loadOlderEntries() {
 function formatTimestamp(nanoStr) {
   const nanos = BigInt(nanoStr);
   const millis = Number(nanos / 1000000n);
-  const d = new Date(millis);
-  const pad = (n) => String(n).padStart(2, "0");
-  return `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}.${String(d.getMilliseconds()).padStart(3, "0")}`;
+  return formatTimeInZone(new Date(millis), effectiveTimeZone());
 }
 
 function escapeHtml(str) {

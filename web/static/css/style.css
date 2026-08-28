@@ -99,6 +99,31 @@ body {
   color: var(--text-dim);
 }
 
+.header-right {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+}
+
+.tz-picker {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-dim);
+}
+
+.tz-picker .subtitle-icon {
+  width: 15px;
+  height: 15px;
+  flex-shrink: 0;
+}
+
+.tz-picker select {
+  padding: 5px 8px;
+  font-size: 12px;
+  max-width: 220px;
+}
+
 .status {
   display: flex;
   align-items: center;
