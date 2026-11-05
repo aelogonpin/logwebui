@@ -237,10 +237,16 @@ propio binario se comprueba a sí mismo — `lokiviews -healthcheck` hace un
 3. **Rango de tiempo**: chips rápidos (15m/1h/6h/24h/3d) o fechas
    personalizadas.
 4. **Límite y orden**: selecciona cuántas líneas traer (100/500/1000/2000/5000)
-   o elige "Personalizado…" para indicar cualquier número — no hay un tope
-   artificial en la app; si pides más de lo que tu Loki permite en una
-   sola consulta, Loki devolverá su propio error, no un límite inventado
-   por nosotros.
+   o "Líneas personalizadas…" para indicar cualquier número. En el rango de
+   tiempo Personalizado las opciones son "Todo el rango de fechas" (por
+   defecto) o "Líneas personalizadas…". No hay un tope
+   artificial en la app: por encima de 5000 líneas, el backend reparte la
+   búsqueda en varias consultas a Loki, así que el límite
+   `max_entries_limit_per_query` no te afecta (siempre que tu Loki admita
+   al menos 5000 por consulta, su valor por defecto). Si la búsqueda supera
+   las 100.000 líneas (y tu límite también), no se abre en el visor: un
+   aviso indica que no habrá previa y se descarga directamente todo el rango de tiempo en un `.txt`, ordenado de
+   más antiguo a más reciente e ignorando el límite y el orden elegidos.
 5. **Visor de logs**: panel tipo terminal con cada línea coloreada según
    la severidad detectada (`ERROR`, `WARN`, `INFO`, `DEBUG`/`TRACE`).
    Usa los chips (`Solo Errores`, `Solo Warnings`…) o el campo de texto
@@ -306,6 +312,9 @@ hacer GET. `matchers` va como JSON serializado en la propia query string:
 GET /api/export?matchers=[{"key":"pod","op":"=","value":"worker-x"}]&orgId=acme-prod&lookbackDays=30
 ```
 
+Con `start` y `end` (RFC3339) en vez de `lookbackDays`, exporta solo ese
+rango de tiempo.
+
 Eventos que emite (formato `event: <nombre>\ndata: <json>\n\n`):
 
 - `started` — `{ "query": "...", "firstSeen": "...", "lastSeen": "..." }`,
@@ -322,14 +331,16 @@ Eventos que emite (formato `event: <nombre>\ndata: <json>\n\n`):
 
 `downloadId` se canjea una única vez en
 `GET /api/export/download?id=<id>`, que sirve el archivo y lo borra del
-disco justo después.
+disco justo después. El parámetro opcional `filename` indica el nombre del
+archivo; la web usa el Org ID, los valores de los labels filtrados y la
+fecha de extracción.
 
-**Nota de robustez**: la paginación avanza el cursor por nanosegundo tras
-cada página. Si la fuente de logs solo tiene precisión de segundo (o
-peor), el cursor puede quedarse "atascado" reobteniendo la última página
-para siempre — el backend detecta esto (misma página repetida) y corta
-la exportación de forma limpia en vez de bucle infinito o archivo lleno
-de líneas duplicadas.
+**Nota de robustez**: la exportación recorre ventanas de tiempo
+consecutivas en vez de avanzar desde el último timestamp de cada página.
+Al truncar por límite, Loki no devuelve estrictamente las N primeras
+líneas, así que ese cursor se saltaría líneas sin avisar. Una ventana que
+vuelve por debajo del límite está completa; si llega al límite, se
+descarta y se repite con la mitad de ancho.
 
 ## Despliegue en Kubernetes
 

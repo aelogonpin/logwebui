@@ -23,6 +23,15 @@ import (
 
 const defaultLimit = 1000
 
+// MaxPageSize is the most lines requested from Loki in a single query_range
+// call. It matches Loki's default max_entries_limit_per_query; QueryRange
+// splits anything larger across several calls.
+const MaxPageSize = 5000
+
+// initialWindow is the first time window WalkRange tries before adapting
+// to how dense the logs actually are.
+const initialWindow = time.Hour
+
 // Client talks to a single Loki instance.
 type Client struct {
 	baseURL      string
@@ -82,18 +91,195 @@ func BuildSelector(matchers []LabelMatcher) (string, error) {
 }
 
 // QueryRange queries Loki and returns clean, ready-to-render log entries
-// sorted chronologically (oldest first).
+// sorted chronologically (oldest first). Limits above MaxPageSize are
+// fetched page by page, so the caller's limit isn't bound by Loki's
+// per-query cap.
 func (c *Client) QueryRange(ctx context.Context, p QueryParams) ([]Entry, error) {
+	if p.Limit <= MaxPageSize {
+		return c.queryPage(ctx, p)
+	}
+	return c.queryPaged(ctx, p)
+}
+
+// queryPaged collects entries from WalkRange until the limit is reached.
+func (c *Client) queryPaged(ctx context.Context, p QueryParams) ([]Entry, error) {
+	var entries []Entry
+	err := c.WalkRange(ctx, p, func(batch []Entry, _ int64) bool {
+		entries = append(entries, batch...)
+		return len(entries) < p.Limit
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	sort.SliceStable(entries, func(i, j int) bool {
+		return entries[i].Timestamp < entries[j].Timestamp
+	})
+	if len(entries) > p.Limit {
+		if p.Direction == "forward" {
+			entries = entries[:p.Limit]
+		} else {
+			entries = entries[len(entries)-p.Limit:]
+		}
+	}
+	return entries, nil
+}
+
+// WalkRange reads every line in [p.Start, p.End) in consecutive time
+// windows, walking in p.Direction, and passes each window's lines to visit
+// along with the nanosecond timestamp reached so far. visit returns false
+// to stop early. p.Limit is ignored.
+//
+// It deliberately doesn't resume from the last timestamp of a full page:
+// when Loki truncates a result at the limit, the lines it returns aren't
+// strictly the first N, so such a cursor silently skips lines. A window
+// that comes back below the limit is known to be complete, so a full one
+// is discarded and retried at half the width instead.
+func (c *Client) WalkRange(ctx context.Context, p QueryParams, visit func(batch []Entry, reachedNs int64) bool) error {
+	start, end, err := resolveBounds(p.Start, p.End)
+	if err != nil {
+		return err
+	}
+	forward := p.Direction == "forward"
+	width := int64(initialWindow)
+
+	for start < end {
+		from, to := start, end
+		if span := end - start; width < span {
+			if forward {
+				to = start + width
+			} else {
+				from = end - width
+			}
+		}
+
+		page := p
+		page.Limit = MaxPageSize
+		page.Start = strconv.FormatInt(from, 10)
+		page.End = strconv.FormatInt(to, 10)
+		batch, err := c.queryPage(ctx, page)
+		if err != nil {
+			return err
+		}
+
+		// A full window can't be split below 1ns; keep what it returned.
+		if len(batch) >= MaxPageSize && to-from > 1 {
+			width = (to - from) / 2
+			continue
+		}
+
+		reached := to
+		if forward {
+			start = to
+		} else {
+			end = from
+			reached = from
+		}
+		if !visit(withinWindow(batch, from, to), reached) {
+			return nil
+		}
+		if len(batch) < MaxPageSize/2 {
+			width = (to - from) * 2
+		}
+	}
+	return nil
+}
+
+// withinWindow drops lines outside [from, to): a source with coarse
+// timestamps can return lines just before from, and those belong to the
+// previous window.
+func withinWindow(batch []Entry, from, to int64) []Entry {
+	kept := make([]Entry, 0, len(batch))
+	for _, e := range batch {
+		ns, err := strconv.ParseInt(e.Timestamp, 10, 64)
+		if err != nil || (ns >= from && ns < to) {
+			kept = append(kept, e)
+		}
+	}
+	return kept
+}
+
+// resolveBounds parses RFC3339 or nanosecond bounds, applying the same
+// defaults as Loki when they're empty: the last hour.
+func resolveBounds(start, end string) (int64, int64, error) {
+	endNs := time.Now().UnixNano()
+	if end != "" {
+		parsed, err := parseTimeNs(end)
+		if err != nil {
+			return 0, 0, err
+		}
+		endNs = parsed
+	}
+	startNs := endNs - int64(time.Hour)
+	if start != "" {
+		parsed, err := parseTimeNs(start)
+		if err != nil {
+			return 0, 0, err
+		}
+		startNs = parsed
+	}
+	return startNs, endNs, nil
+}
+
+func parseTimeNs(s string) (int64, error) {
+	if ns, err := strconv.ParseInt(s, 10, 64); err == nil {
+		return ns, nil
+	}
+	t, err := time.Parse(time.RFC3339Nano, s)
+	if err != nil {
+		return 0, fmt.Errorf("invalid time %q: %w", s, err)
+	}
+	return t.UnixNano(), nil
+}
+
+// CountLines returns how many lines match the matchers in [start, end),
+// without fetching them. The query is a metric aggregation over a plain
+// selector, so like every other request it never contains "{{".
+func (c *Client) CountLines(ctx context.Context, p QueryParams) (int64, error) {
+	selector, err := BuildSelector(p.Matchers)
+	if err != nil {
+		return 0, err
+	}
+	start, end, err := resolveBounds(p.Start, p.End)
+	if err != nil {
+		return 0, err
+	}
+	seconds := (end - start + int64(time.Second) - 1) / int64(time.Second)
+	if seconds < 1 {
+		seconds = 1
+	}
+
+	q := url.Values{}
+	q.Set("query", fmt.Sprintf("sum(count_over_time(%s[%ds]))", selector, seconds))
+	q.Set("time", strconv.FormatInt(end, 10))
+
+	var parsed struct {
+		Data struct {
+			Result []struct {
+				Value [2]interface{} `json:"value"`
+			} `json:"result"`
+		} `json:"data"`
+	}
+	if err := c.get(ctx, "/loki/api/v1/query", q, c.resolveOrgID(p.OrgID), &parsed); err != nil {
+		return 0, err
+	}
+	if len(parsed.Data.Result) == 0 {
+		return 0, nil
+	}
+	raw, ok := parsed.Data.Result[0].Value[1].(string)
+	if !ok {
+		return 0, fmt.Errorf("unexpected count format from loki")
+	}
+	return strconv.ParseInt(raw, 10, 64)
+}
+
+// queryPage performs a single query_range call.
+func (c *Client) queryPage(ctx context.Context, p QueryParams) ([]Entry, error) {
 	selector, err := BuildSelector(p.Matchers)
 	if err != nil {
 		return nil, err
 	}
 
-	// No artificial upper cap here: whatever the caller asks for is sent
-	// as-is, and Loki's own configured max_entries_limit_per_query decides
-	// what's actually allowed (surfaced to the user as a normal error if
-	// exceeded) rather than us guessing a ceiling that may not match
-	// their Loki's real configuration.
 	limit := p.Limit
 	if limit <= 0 {
 		limit = defaultLimit

@@ -7,24 +7,25 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"regexp"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/eloygonzalezdeiris/lokiviews/internal/loki"
 )
 
 const (
-	// exportPageSize is how many lines we ask Loki for per pagination
-	// step. Kept well under typical Loki max_entries_limit_per_query
-	// defaults so a single page rarely gets rejected outright.
-	exportPageSize = 2000
 	// exportMaxLines is a hard safety cap so one export request can't run
 	// forever or fill the disk if a selector matches an enormous stream.
 	exportMaxLines = 2_000_000
 )
 
+var unsafeFilenameChars = regexp.MustCompile(`[^A-Za-z0-9._-]+`)
+
 // Export handles GET /api/export: streams the *entire* history of a log
-// stream selector as Server-Sent Events with real progress, then hands
+// stream selector (or just the start/end range, when both are given) as
+// Server-Sent Events with real progress, then hands
 // back a one-time download id. "Real progress" here means the fraction of
 // the object's actual observed lifetime (first log line to last log line)
 // that has been paged through so far — not a guessed/animated percentage.
@@ -72,6 +73,18 @@ func (h *Handlers) Export(w http.ResponseWriter, r *http.Request) {
 
 	windowEnd := time.Now().UTC()
 	windowStart := windowEnd.Add(-time.Duration(lookbackDays) * 24 * time.Hour)
+	noDataMessage := fmt.Sprintf("no se han encontrado logs para este selector en los últimos %d días", lookbackDays)
+	if start, end := r.URL.Query().Get("start"), r.URL.Query().Get("end"); start != "" && end != "" {
+		if windowStart, err = time.Parse(time.RFC3339Nano, start); err != nil {
+			fail("invalid start: " + err.Error())
+			return
+		}
+		if windowEnd, err = time.Parse(time.RFC3339Nano, end); err != nil {
+			fail("invalid end: " + err.Error())
+			return
+		}
+		noDataMessage = "no se han encontrado logs para este selector en el rango indicado"
+	}
 
 	// Find the object's first and last known log line within the lookback
 	// window — our best available proxy for "since it started" to "until
@@ -85,7 +98,7 @@ func (h *Handlers) Export(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if len(firstEntries) == 0 {
-		fail(fmt.Sprintf("no se han encontrado logs para este selector en los últimos %d días", lookbackDays))
+		fail(noDataMessage)
 		return
 	}
 	lastEntries, err := h.loki.QueryRange(ctx, loki.QueryParams{
@@ -126,69 +139,24 @@ func (h *Handlers) Export(w http.ResponseWriter, r *http.Request) {
 		"lastSeen":  nsToRFC3339(lastNs),
 	})
 
-	cursorNs := firstNs
 	totalLines := 0
 	truncated := false
-	var prevBatchSignature string
-	var lastWrittenTs, lastWrittenLine string
 
-	for {
-		select {
-		case <-ctx.Done():
-			// Client cancelled / disconnected: stop paginating, nothing
-			// more to send.
-			return
-		default:
-		}
-
-		batch, err := h.loki.QueryRange(ctx, loki.QueryParams{
-			Matchers: matchers, OrgID: orgID, Direction: "forward", Limit: exportPageSize,
-			Start: nsToRFC3339(cursorNs), End: nsToRFC3339(lastNs + 1),
-		})
-		if err != nil {
-			fail(err.Error())
-			return
-		}
-		if len(batch) == 0 {
-			break
-		}
-
-		// If this page is identical (same span and count) to the one we
-		// just processed, the cursor genuinely cannot move any further —
-		// some log sources only preserve second/millisecond timestamp
-		// precision, so nudging the cursor by a single nanosecond doesn't
-		// change what comes back, which would otherwise loop forever
-		// re-fetching the same tail entries. Treat this as the real end.
-		batchSignature := fmt.Sprintf("%s|%s|%d", batch[0].Timestamp, batch[len(batch)-1].Timestamp, len(batch))
-		if batchSignature == prevBatchSignature {
-			break
-		}
-		prevBatchSignature = batchSignature
-
-		newCount := 0
+	// The window bounds, not firstNs/lastNs, delimit the walk: those two
+	// are only used to report progress.
+	err = h.loki.WalkRange(ctx, loki.QueryParams{
+		Matchers: matchers, OrgID: orgID, Direction: "forward",
+		Start: windowStart.Format(time.RFC3339Nano), End: windowEnd.Format(time.RFC3339Nano),
+	}, func(batch []loki.Entry, reachedNs int64) bool {
 		for _, e := range batch {
-			// A coarser-than-nanosecond timestamp source can also cause a
-			// single entry to reappear at the very start of a page (the
-			// last entry of the previous page, re-selected because the
-			// cursor couldn't advance past its bucket) — skip writing it
-			// again rather than duplicating it in the output.
-			if e.Timestamp == lastWrittenTs && e.Line == lastWrittenLine {
-				continue
-			}
 			fmt.Fprintf(tmpFile, "%s  %s\n", nsToRFC3339(mustParseNs(e.Timestamp)), e.Line)
-			lastWrittenTs, lastWrittenLine = e.Timestamp, e.Line
-			newCount++
 		}
-		totalLines += newCount
+		totalLines += len(batch)
 
-		lastBatchNs := mustParseNs(batch[len(batch)-1].Timestamp)
-		if lastBatchNs < cursorNs {
-			lastBatchNs = cursorNs
-		}
-		cursorNs = lastBatchNs + 1
-
-		percent := float64(cursorNs-firstNs) / float64(totalSpanNs) * 100
-		if percent > 100 {
+		percent := float64(reachedNs-firstNs) / float64(totalSpanNs) * 100
+		if percent < 0 {
+			percent = 0
+		} else if percent > 100 {
 			percent = 100
 		}
 		send("progress", map[string]interface{}{
@@ -198,11 +166,17 @@ func (h *Handlers) Export(w http.ResponseWriter, r *http.Request) {
 
 		if totalLines >= exportMaxLines {
 			truncated = true
-			break
+			return false
 		}
-		if cursorNs > lastNs {
-			break
-		}
+		return true
+	})
+	if ctx.Err() != nil {
+		// Client cancelled / disconnected: nothing more to send.
+		return
+	}
+	if err != nil {
+		fail(err.Error())
+		return
 	}
 
 	id, err := randomExportID()
@@ -243,8 +217,18 @@ func (h *Handlers) ExportDownload(w http.ResponseWriter, r *http.Request) {
 	defer f.Close()
 
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-	w.Header().Set("Content-Disposition", `attachment; filename="lokiviews-full-lifecycle.txt"`)
-	http.ServeContent(w, r, "lokiviews-full-lifecycle.txt", time.Now(), f)
+	name := downloadFilename(r.URL.Query().Get("filename"))
+	w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"`, name))
+	http.ServeContent(w, r, name, time.Now(), f)
+}
+
+// downloadFilename makes a caller-supplied name safe for a response header.
+func downloadFilename(name string) string {
+	name = unsafeFilenameChars.ReplaceAllString(name, "-")
+	if name == "" || name == ".txt" || !strings.HasSuffix(name, ".txt") {
+		return "lokiviews-logs.txt"
+	}
+	return name
 }
 
 func nsToRFC3339(ns int64) string {

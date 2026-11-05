@@ -3,8 +3,10 @@ package loki
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -163,5 +165,220 @@ func TestClientQueryRangePerRequestOrgIDOverridesDefault(t *testing.T) {
 	}
 	if capturedOrgID != "ui-provided-org" {
 		t.Errorf("expected per-request orgID to override client default, got %q", capturedOrgID)
+	}
+}
+
+// fakePagedLoki serves lines (nanosecond timestamps, ascending) honouring
+// start (inclusive), end (exclusive), limit and direction, and rejects any
+// limit above pageCap the way a real Loki does.
+func fakePagedLoki(t *testing.T, timestamps []int64, pageCap int, calls *int) *httptest.Server {
+	t.Helper()
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		*calls++
+		q := r.URL.Query()
+		limit, _ := strconv.Atoi(q.Get("limit"))
+		if limit > pageCap {
+			http.Error(w, "max entries limit per query exceeded", http.StatusBadRequest)
+			return
+		}
+		start, end := int64(0), int64(1)<<62
+		if v := q.Get("start"); v != "" {
+			start, _ = strconv.ParseInt(v, 10, 64)
+		}
+		if v := q.Get("end"); v != "" {
+			end, _ = strconv.ParseInt(v, 10, 64)
+		}
+
+		var values [][]string
+		add := func(i int) {
+			values = append(values, []string{strconv.FormatInt(timestamps[i], 10), fmt.Sprintf("line-%d", i)})
+		}
+		inRange := func(i int) bool { return timestamps[i] >= start && timestamps[i] < end }
+		if q.Get("direction") == "forward" {
+			for i := 0; i < len(timestamps) && len(values) < limit; i++ {
+				if inRange(i) {
+					add(i)
+				}
+			}
+		} else {
+			for i := len(timestamps) - 1; i >= 0 && len(values) < limit; i-- {
+				if inRange(i) {
+					add(i)
+				}
+			}
+		}
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"status": "success",
+			"data": map[string]interface{}{
+				"result": []map[string]interface{}{
+					{"stream": map[string]string{"app": "x"}, "values": values},
+				},
+			},
+		})
+	}))
+}
+
+func TestClientQueryRangePaginatesPastPerQueryCap(t *testing.T) {
+	// Plain increasing timestamps, plus bursts sharing one timestamp.
+	const base = int64(1_700_000_000_000_000_000)
+	timestamps := make([]int64, 12000)
+	for i := range timestamps {
+		timestamps[i] = base + int64(i)
+		if i >= 4990 && i < 5010 {
+			timestamps[i] = base + 4990
+		}
+		if i >= 6990 && i < 7010 {
+			timestamps[i] = base + 6990
+		}
+	}
+
+	matchers := []LabelMatcher{{Key: "app", Op: "=", Value: "x"}}
+	tests := []struct {
+		name        string
+		direction   string
+		limit       int
+		first, last string
+		wantCount   int
+	}{
+		{"forward, all", "forward", 20000, "line-0", "line-11999", 12000},
+		{"backward, all", "backward", 20000, "line-0", "line-11999", 12000},
+		{"forward, trimmed", "forward", 6000, "line-0", "line-5999", 6000},
+		{"backward, trimmed", "backward", 6000, "line-6000", "line-11999", 6000},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			calls := 0
+			srv := fakePagedLoki(t, timestamps, MaxPageSize, &calls)
+			defer srv.Close()
+
+			entries, err := NewClient(srv.URL, "", "", "").QueryRange(context.Background(), QueryParams{
+				Matchers: matchers, Limit: tt.limit, Direction: tt.direction,
+				Start: strconv.FormatInt(base, 10), End: strconv.FormatInt(base+int64(len(timestamps)), 10),
+			})
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if len(entries) != tt.wantCount {
+				t.Fatalf("expected %d entries, got %d", tt.wantCount, len(entries))
+			}
+			lines := map[string]int{}
+			for _, e := range entries {
+				lines[e.Line]++
+			}
+			if len(lines) != tt.wantCount {
+				t.Errorf("expected %d distinct lines, got %d", tt.wantCount, len(lines))
+			}
+			if lines[tt.first] != 1 || lines[tt.last] != 1 {
+				t.Errorf("expected %s and %s to be present once", tt.first, tt.last)
+			}
+			if calls < 2 {
+				t.Errorf("expected several Loki calls, got %d", calls)
+			}
+		})
+	}
+}
+
+func TestClientQueryRangeSurvivesLokiSkippingLinesWhenTruncating(t *testing.T) {
+	// Real Loki, when it truncates at the limit, doesn't return strictly
+	// the first N lines. Mimic it by leaving some out of every full page.
+	const base = int64(1_700_000_000_000_000_000)
+	const total = 12000
+	calls := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		q := r.URL.Query()
+		limit, _ := strconv.Atoi(q.Get("limit"))
+		start, _ := strconv.ParseInt(q.Get("start"), 10, 64)
+		end, _ := strconv.ParseInt(q.Get("end"), 10, 64)
+
+		var inRange [][]string
+		for i := int64(0); i < total; i++ {
+			if ts := base + i; ts >= start && ts < end {
+				inRange = append(inRange, []string{strconv.FormatInt(ts, 10), fmt.Sprintf("line-%d", i)})
+			}
+		}
+		values := inRange
+		if len(inRange) > limit {
+			values = nil
+			for i, v := range inRange {
+				if len(values) < limit && i%100 != 99 {
+					values = append(values, v)
+				}
+			}
+		}
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"status": "success",
+			"data": map[string]interface{}{
+				"result": []map[string]interface{}{
+					{"stream": map[string]string{"app": "x"}, "values": values},
+				},
+			},
+		})
+	}))
+	defer srv.Close()
+
+	entries, err := NewClient(srv.URL, "", "", "").QueryRange(context.Background(), QueryParams{
+		Matchers: []LabelMatcher{{Key: "app", Op: "=", Value: "x"}},
+		Limit:    20000, Direction: "forward",
+		Start: strconv.FormatInt(base, 10), End: strconv.FormatInt(base+total, 10),
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(entries) != total {
+		t.Errorf("expected %d entries, got %d", total, len(entries))
+	}
+}
+
+func TestClientCountLines(t *testing.T) {
+	var gotQuery string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotQuery = r.URL.Query().Get("query")
+		w.Write([]byte(`{"status":"success","data":{"resultType":"vector","result":[{"metric":{},"value":[1793833200,"508606"]}]}}`))
+	}))
+	defer srv.Close()
+
+	count, err := NewClient(srv.URL, "", "", "").CountLines(context.Background(), QueryParams{
+		Matchers: []LabelMatcher{{Key: "app", Op: "=", Value: "x"}},
+		Start:    "2026-11-02T00:00:00Z", End: "2026-11-02T01:00:00Z",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if count != 508606 {
+		t.Errorf("expected 508606, got %d", count)
+	}
+	if want := `sum(count_over_time({app="x"}[3600s]))`; gotQuery != want {
+		t.Errorf("expected query %s, got %s", want, gotQuery)
+	}
+}
+
+func TestClientCountLinesNoData(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"status":"success","data":{"resultType":"vector","result":[]}}`))
+	}))
+	defer srv.Close()
+
+	count, err := NewClient(srv.URL, "", "", "").CountLines(context.Background(), QueryParams{
+		Matchers: []LabelMatcher{{Key: "app", Op: "=", Value: "x"}},
+	})
+	if err != nil || count != 0 {
+		t.Errorf("expected 0 and no error, got %d, %v", count, err)
+	}
+}
+
+func TestClientQueryRangeSmallLimitIsOneCall(t *testing.T) {
+	calls := 0
+	srv := fakePagedLoki(t, []int64{1000, 1001}, MaxPageSize, &calls)
+	defer srv.Close()
+
+	_, err := NewClient(srv.URL, "", "", "").QueryRange(context.Background(), QueryParams{
+		Matchers: []LabelMatcher{{Key: "app", Op: "=", Value: "x"}}, Limit: MaxPageSize,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if calls != 1 {
+		t.Errorf("expected exactly 1 call, got %d", calls)
 	}
 }

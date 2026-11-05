@@ -48,8 +48,8 @@ func newFakeLifecycleLoki(t *testing.T, birthNs int64, totalLines int, truncateT
 			endNs = deathNs
 		}
 
-		startIdx := int((startNs - birthNs) / testStepNs)
-		endIdx := int((endNs - birthNs + testStepNs - 1) / testStepNs) // ceil, exclusive
+		startIdx := int((startNs - birthNs + testStepNs - 1) / testStepNs) // ceil: start is inclusive
+		endIdx := int((endNs - birthNs + testStepNs - 1) / testStepNs)     // ceil, exclusive
 		if endIdx > totalLines {
 			endIdx = totalLines
 		}
@@ -100,6 +100,9 @@ func newFakeLifecycleLoki(t *testing.T, birthNs int64, totalLines int, truncateT
 }
 
 func parseNsOrDefault(s string, def int64) int64 {
+	if ns, err := strconv.ParseInt(s, 10, 64); err == nil {
+		return ns
+	}
 	if s == "" {
 		return def
 	}
@@ -156,8 +159,8 @@ func runExport(t *testing.T, lokiURL string, matchers []loki.LabelMatcher, lookb
 }
 
 func TestExportPaginatesFullHistoryWithPreciseTimestamps(t *testing.T) {
-	birthNs := time.Date(2026, 8, 1, 0, 0, 0, 0, time.UTC).UnixNano()
-	const totalLines = 5460 // spans more than 2 pages at exportPageSize=2000
+	birthNs := time.Now().Add(-30 * 24 * time.Hour).Truncate(time.Second).UnixNano()
+	const totalLines = 12460 // spans more than 2 pages at loki.MaxPageSize
 
 	fakeLoki := newFakeLifecycleLoki(t, birthNs, totalLines, false)
 	defer fakeLoki.Close()
@@ -195,7 +198,7 @@ func TestExportPaginatesFullHistoryWithPreciseTimestamps(t *testing.T) {
 // duplicated content) or truncated (which would mean it hit the safety
 // cap instead of finishing normally).
 func TestExportDoesNotHangOnCoarseTimestamps(t *testing.T) {
-	birthNs := time.Date(2026, 8, 1, 0, 0, 0, 0, time.UTC).UnixNano()
+	birthNs := time.Now().Add(-30 * 24 * time.Hour).Truncate(time.Second).UnixNano()
 	const totalLines = 5460
 
 	fakeLoki := newFakeLifecycleLoki(t, birthNs, totalLines, true)
@@ -223,7 +226,7 @@ func TestExportDoesNotHangOnCoarseTimestamps(t *testing.T) {
 }
 
 func TestExportFailsCleanlyWhenNoDataInWindow(t *testing.T) {
-	birthNs := time.Date(2026, 8, 1, 0, 0, 0, 0, time.UTC).UnixNano()
+	birthNs := time.Now().Add(-30 * 24 * time.Hour).Truncate(time.Second).UnixNano()
 	fakeLoki := newFakeLifecycleLoki(t, birthNs, 10, false)
 	defer fakeLoki.Close()
 
@@ -246,5 +249,20 @@ func TestExportFailsCleanlyWhenNoDataInWindow(t *testing.T) {
 	}
 	if _, ok := events["failed"]; !ok {
 		t.Fatalf("expected a 'failed' event when no data exists in the window, got raw body:\n%s", raw)
+	}
+}
+
+func TestDownloadFilename(t *testing.T) {
+	tests := []struct{ in, want string }{
+		{"Clarel-pro_my-app_2026-11-05_14-34.txt", "Clarel-pro_my-app_2026-11-05_14-34.txt"},
+		{`evil".txt` + "\r\nX-Injected: 1.txt", "evil-.txt-X-Injected-1.txt"},
+		{"../../etc/passwd", "lokiviews-logs.txt"},
+		{"", "lokiviews-logs.txt"},
+		{".txt", "lokiviews-logs.txt"},
+	}
+	for _, tt := range tests {
+		if got := downloadFilename(tt.in); got != tt.want {
+			t.Errorf("downloadFilename(%q) = %q, want %q", tt.in, got, tt.want)
+		}
 	}
 }

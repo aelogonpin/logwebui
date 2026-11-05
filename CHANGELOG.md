@@ -19,6 +19,27 @@ y este proyecto usa [Versionado Semántico](https://semver.org/lang/es/).
   como los campos de fecha ya rellenados se recalculan sin perder el
   instante real seleccionado. Implementado sin dependencias nuevas,
   apoyándose solo en `Intl.DateTimeFormat`.
+- Las búsquedas de más de 100.000 líneas se descargan directamente a un
+  `.txt` con todo el rango, en vez de abrirse en el visor y colgar el
+  navegador. Nuevo endpoint `POST /api/count` y parámetros `start`/`end`
+  en `/api/export`.
+- En el rango de tiempo Personalizado, el límite ofrece "Todo el rango de
+  fechas" (por defecto) o "Líneas personalizadas…". Los demás modos
+  mantienen sus opciones, y al volver a ellos se recupera el límite que
+  hubiera.
+
+- Los archivos descargados se nombran con el Org ID, los valores de los
+  labels filtrados y la fecha de extracción, en vez de un nombre fijo.
+
+### Corregido
+
+- Las búsquedas de más de 5000 líneas ya no fallan con
+  `max entries limit per query exceeded`: el backend las reparte en varias
+  consultas a Loki.
+- La exportación completa podía perder líneas en silencio: avanzaba desde
+  el último timestamp de cada página, pero Loki no devuelve estrictamente
+  las N primeras al truncar. Ahora recorre ventanas de tiempo y parte por
+  la mitad las que llegan al límite.
 
 ## [1.1.0] - 2026-08-26
 

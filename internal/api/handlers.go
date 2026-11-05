@@ -72,7 +72,13 @@ func (h *Handlers) Query(w http.ResponseWriter, r *http.Request) {
 		effectiveOrgID = h.defaultLokiOrgID
 	}
 
-	ctx, cancel := context.WithTimeout(r.Context(), queryTimeout)
+	// queryTimeout is per Loki call; large limits take several of them.
+	// Doubled because a window that fills up is fetched again, split.
+	pages := 2 * ((req.Limit-1)/loki.MaxPageSize + 1)
+	if pages < 1 {
+		pages = 1
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), time.Duration(pages)*queryTimeout)
 	defer cancel()
 
 	entries, err := h.loki.QueryRange(ctx, loki.QueryParams{
@@ -99,6 +105,37 @@ func (h *Handlers) Query(w http.ResponseWriter, r *http.Request) {
 		"start":   req.Start,
 		"end":     req.End,
 	})
+}
+
+// Count handles POST /api/count: how many lines match the posted matchers
+// and range, so the frontend can tell whether a result fits in the viewer
+// before fetching it.
+func (h *Handlers) Count(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed, use POST")
+		return
+	}
+
+	var req queryRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body: "+err.Error())
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), queryTimeout)
+	defer cancel()
+
+	count, err := h.loki.CountLines(ctx, loki.QueryParams{
+		Matchers: req.Matchers,
+		Start:    req.Start,
+		End:      req.End,
+		OrgID:    req.OrgID,
+	})
+	if err != nil {
+		writeError(w, http.StatusBadGateway, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]int64{"count": count})
 }
 
 // Labels handles GET /api/labels, listing known label names for the

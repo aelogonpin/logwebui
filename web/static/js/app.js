@@ -118,6 +118,11 @@ const el = {
   lifecycleProgressText: document.getElementById("lifecycleProgressText"),
   lifecycleExportCancel: document.getElementById("lifecycleExportCancel"),
   lifecycleExportError: document.getElementById("lifecycleExportError"),
+  rangeDownloadProgress: document.getElementById("rangeDownloadProgress"),
+  rangeDownloadNotice: document.getElementById("rangeDownloadNotice"),
+  rangeDownloadFill: document.getElementById("rangeDownloadFill"),
+  rangeDownloadText: document.getElementById("rangeDownloadText"),
+  rangeDownloadCancel: document.getElementById("rangeDownloadCancel"),
 };
 
 // ---------- Timezone ----------
@@ -693,11 +698,34 @@ function setLimitControlsLocked(locked) {
   });
 }
 
+// In a custom range the choice is the whole date range (the default) or a
+// specific number of lines; the presets only apply to the other modes.
+// Leaving it restores the earlier choice, unless the user typed a number.
+let limitBeforeCustomMode = null;
+
+function applyLimitOptionsForMode(previousMode, mode) {
+  const isCustomRange = mode === "custom";
+  [...el.limitSelect.options].forEach((option) => {
+    const available = option.value === "custom" || (option.value === "all") === isCustomRange;
+    option.hidden = !available;
+    option.disabled = !available;
+  });
+
+  if (isCustomRange && previousMode !== "custom") {
+    limitBeforeCustomMode = el.limitSelect.value;
+    el.limitSelect.value = "all";
+  } else if (!isCustomRange && el.limitSelect.value === "all") {
+    el.limitSelect.value = limitBeforeCustomMode;
+  }
+  el.limitCustomInput.hidden = el.limitSelect.value !== "custom";
+}
+
 function setTimeMode(mode) {
   if (state.timeMode === "live" && mode !== "live") {
     stopLiveTail();
   }
 
+  applyLimitOptionsForMode(state.timeMode, mode);
   state.timeMode = mode;
   [...el.timeModeToggle.children].forEach((btn) => {
     btn.classList.toggle("active", btn.dataset.mode === mode);
@@ -777,11 +805,13 @@ el.limitSelect.addEventListener("change", () => {
 });
 
 // Resolves the effective line limit, or throws with a user-facing message
-// if "Personalizado" is selected but left empty/invalid. No artificial
-// ceiling on the custom value here — Loki's own configured max decides
-// what's actually allowed, and a too-high value just comes back as a
-// normal error instead of us silently clamping it to a guess.
+// if a custom number is selected but left empty/invalid. "Whole range" is
+// just over the preview cap: that makes the search count the lines first,
+// so it either fits in the viewer in full or downloads the whole range.
 function resolveLineLimit() {
+  if (el.limitSelect.value === "all") {
+    return MAX_PREVIEW_LINES + 1;
+  }
   if (el.limitSelect.value !== "custom") {
     return Number(el.limitSelect.value);
   }
@@ -805,10 +835,54 @@ function collectMatchers() {
     .filter((m) => m.key && m.value);
 }
 
+// Download name: tenant, filtered label values and extraction date, e.g.
+// Clarel-pro_comerzzia-pro_my-container_2026-11-05_14-34.txt
+function logFileName() {
+  const labelValues = collectMatchers()
+    .filter((m) => m.op === "=" || m.op === "=~")
+    .map((m) => m.value);
+  const name = [el.orgIdInput.value.trim(), ...labelValues]
+    .map((part) => part.replace(/[^A-Za-z0-9._-]+/g, "-").replace(/^[-.]+|[-.]+$/g, ""))
+    .filter(Boolean)
+    .join("_")
+    .slice(0, 150);
+  const date = toZonedInputValue(new Date(), effectiveTimeZone()).replace("T", "_").replace(":", "-");
+  return `${name || "logs"}_${date}.txt`;
+}
+
 function setStatus(mode, text) {
   const dot = el.connStatus.querySelector(".dot");
   dot.className = `dot dot-${mode}`;
   el.connStatus.querySelector(".status-text").textContent = text;
+}
+
+// Above this many lines a search downloads to a file instead of opening
+// in the viewer, which creates one DOM node per line and would hang the tab.
+const MAX_PREVIEW_LINES = 100000;
+
+// Null when the count isn't available: the search then proceeds as usual.
+async function countLines(payload, signal) {
+  try {
+    const res = await fetch("/api/count", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+      signal,
+    });
+    if (!res.ok) return null;
+    return (await res.json()).count;
+  } catch (err) {
+    if (err.name === "AbortError") throw err;
+    return null;
+  }
+}
+
+function restoreResultsView() {
+  if (state.entries.length > 0) {
+    el.logLines.hidden = false;
+  } else {
+    el.emptyState.hidden = false;
+  }
 }
 
 function setLoading(isLoading) {
@@ -901,11 +975,25 @@ async function runSearch() {
     end: range.end,
   };
 
+  // A finished download's notice no longer describes the current search.
+  if (activeExport?.ui.progress !== el.rangeDownloadProgress) {
+    el.rangeDownloadProgress.hidden = true;
+  }
+
   const controller = new AbortController();
   state.abortController = controller;
   state.searching = true;
   setLoading(true);
   try {
+    if (limit > MAX_PREVIEW_LINES) {
+      const total = await countLines(payload, controller.signal);
+      if (total > MAX_PREVIEW_LINES) {
+        startRangeDownload(payload, total);
+        restoreResultsView();
+        return;
+      }
+    }
+
     const res = await fetch("/api/query", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -941,11 +1029,7 @@ async function runSearch() {
     // setLoading(true) hid whatever was on screen; since this search
     // didn't complete, state.entries is unchanged, so just re-sync the
     // view to it (old results reappear, or the empty hint if there were none).
-    if (state.entries.length > 0) {
-      el.logLines.hidden = false;
-    } else {
-      el.emptyState.hidden = false;
-    }
+    restoreResultsView();
   } finally {
     state.searching = false;
     state.abortController = null;
@@ -1367,9 +1451,8 @@ el.downloadBtn.addEventListener("click", () => {
   const blob = new Blob([lines.join("\n") + "\n"], { type: "text/plain;charset=utf-8" });
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
-  const stamp = new Date().toISOString().replace(/[:.]/g, "-");
   a.href = url;
-  a.download = `lokiviews-logs-${stamp}.txt`;
+  a.download = logFileName();
   document.body.appendChild(a);
   a.click();
   a.remove();
@@ -1430,7 +1513,8 @@ function initResizablePanel() {
 // (first log to last log) covered so far, computed server-side from the
 // actual timestamps being paged through — never an animated/fake guess.
 
-let lifecycleEventSource = null;
+// Only one export runs at a time: { source, ui }.
+let activeExport = null;
 let lifecycleStartedAt = null;
 
 // Linear ETA from real, measured progress: elapsed wall-clock time so far
@@ -1493,18 +1577,91 @@ el.lifecycleExportToggle.addEventListener("click", () => {
   setSearchControlsLocked(willBeOpen);
 });
 
-function resetLifecycleUI() {
-  el.lifecycleExportStart.disabled = false;
-  el.lifecycleProgress.hidden = true;
-  el.lifecycleProgressFill.style.width = "0%";
+function resetExportUI(ui) {
+  if (ui.startBtn) ui.startBtn.disabled = false;
+  ui.progress.hidden = true;
+  ui.fill.style.width = "0%";
 }
 
-function stopLifecycleExport() {
-  if (lifecycleEventSource) {
-    lifecycleEventSource.close();
-    lifecycleEventSource = null;
+function stopExport() {
+  if (activeExport) {
+    activeExport.source.close();
+    activeExport = null;
   }
   lifecycleStartedAt = null;
+}
+
+// Runs /api/export and saves the result, reporting through ui's elements:
+// { progress, fill, text, error, startBtn? }, plus initialText/onError.
+function startExport(qs, ui) {
+  if (activeExport) {
+    const previousUI = activeExport.ui;
+    stopExport();
+    resetExportUI(previousUI);
+  }
+
+  // Named now: the form may have changed by the time the export finishes.
+  const fileName = logFileName();
+
+  if (ui.startBtn) ui.startBtn.disabled = true;
+  ui.progress.hidden = false;
+  ui.fill.style.width = "0%";
+  ui.text.textContent = ui.initialText;
+  lifecycleStartedAt = Date.now();
+
+  const source = new EventSource(`/api/export?${qs.toString()}`);
+  activeExport = { source, ui };
+
+  const failWith = (message) => {
+    ui.error.textContent = message;
+    ui.error.hidden = false;
+    stopExport();
+    resetExportUI(ui);
+  };
+
+  source.addEventListener("started", (evt) => {
+    const data = JSON.parse(evt.data);
+    ui.text.textContent = `Encontrado: ${data.firstSeen} → ${data.lastSeen}. Descargando…`;
+  });
+
+  source.addEventListener("progress", (evt) => {
+    const data = JSON.parse(evt.data);
+    const pct = data.percent.toFixed(1);
+    ui.fill.style.width = `${pct}%`;
+    ui.text.textContent =
+      `${pct}% — ${data.lines.toLocaleString("es-ES")} líneas descargadas` + estimateRemaining(data.percent);
+  });
+
+  source.addEventListener("done", (evt) => {
+    const data = JSON.parse(evt.data);
+    ui.fill.style.width = "100%";
+    ui.text.textContent =
+      `Completado: ${data.lines.toLocaleString("es-ES")} líneas` +
+      (data.truncated ? " (cortado por el límite de seguridad — el objeto tiene aún más historial)" : "");
+    stopExport();
+    if (ui.startBtn) ui.startBtn.disabled = false;
+    // A normal browser download, not a JS Blob — the file can be huge and
+    // this streams straight to disk instead of holding it all in memory.
+    window.location.href =
+      `/api/export/download?id=${encodeURIComponent(data.downloadId)}&filename=${encodeURIComponent(fileName)}`;
+  });
+
+  source.addEventListener("failed", (evt) => {
+    let message = "Error durante la exportación.";
+    try {
+      message = JSON.parse(evt.data).error || message;
+    } catch (_) {
+      // keep default message
+    }
+    failWith(message);
+  });
+
+  source.onerror = () => {
+    // Fires on a genuine connection drop — "done"/"failed" already close
+    // the stream themselves before this would have a chance to matter.
+    if (activeExport?.source !== source) return;
+    failWith("Se perdió la conexión durante la exportación.");
+  };
 }
 
 el.lifecycleExportStart.addEventListener("click", () => {
@@ -1517,76 +1674,53 @@ el.lifecycleExportStart.addEventListener("click", () => {
     return;
   }
 
-  stopLifecycleExport();
-
   const qs = new URLSearchParams();
   qs.set("matchers", JSON.stringify(matchers));
   const orgId = el.orgIdInput.value.trim();
   if (orgId) qs.set("orgId", orgId);
   qs.set("lookbackDays", el.lifecycleLookback.value);
 
-  el.lifecycleExportStart.disabled = true;
-  el.lifecycleProgress.hidden = false;
-  el.lifecycleProgressFill.style.width = "0%";
-  el.lifecycleProgressText.textContent = "Buscando la primera y última aparición…";
-  lifecycleStartedAt = Date.now();
-
-  lifecycleEventSource = new EventSource(`/api/export?${qs.toString()}`);
-
-  lifecycleEventSource.addEventListener("started", (evt) => {
-    const data = JSON.parse(evt.data);
-    el.lifecycleProgressText.textContent = `Encontrado: ${data.firstSeen} → ${data.lastSeen}. Descargando…`;
+  startExport(qs, {
+    progress: el.lifecycleProgress,
+    fill: el.lifecycleProgressFill,
+    text: el.lifecycleProgressText,
+    error: el.lifecycleExportError,
+    startBtn: el.lifecycleExportStart,
+    initialText: "Buscando la primera y última aparición…",
   });
-
-  lifecycleEventSource.addEventListener("progress", (evt) => {
-    const data = JSON.parse(evt.data);
-    const pct = data.percent.toFixed(1);
-    el.lifecycleProgressFill.style.width = `${pct}%`;
-    el.lifecycleProgressText.textContent =
-      `${pct}% — ${data.lines.toLocaleString("es-ES")} líneas descargadas` + estimateRemaining(data.percent);
-  });
-
-  lifecycleEventSource.addEventListener("done", (evt) => {
-    const data = JSON.parse(evt.data);
-    el.lifecycleProgressFill.style.width = "100%";
-    el.lifecycleProgressText.textContent =
-      `Completado: ${data.lines.toLocaleString("es-ES")} líneas` +
-      (data.truncated ? " (cortado por el límite de seguridad — el objeto tiene aún más historial)" : "");
-    stopLifecycleExport();
-    el.lifecycleExportStart.disabled = false;
-    // A normal browser download, not a JS Blob — the file can be huge and
-    // this streams straight to disk instead of holding it all in memory.
-    window.location.href = `/api/export/download?id=${encodeURIComponent(data.downloadId)}`;
-  });
-
-  lifecycleEventSource.addEventListener("failed", (evt) => {
-    let message = "Error durante la exportación.";
-    try {
-      message = JSON.parse(evt.data).error || message;
-    } catch (_) {
-      // keep default message
-    }
-    el.lifecycleExportError.textContent = message;
-    el.lifecycleExportError.hidden = false;
-    stopLifecycleExport();
-    resetLifecycleUI();
-  });
-
-  lifecycleEventSource.onerror = () => {
-    // Fires on a genuine connection drop — "done"/"failed" already close
-    // the stream themselves before this would have a chance to matter.
-    if (!lifecycleEventSource) return;
-    el.lifecycleExportError.textContent = "Se perdió la conexión durante la exportación.";
-    el.lifecycleExportError.hidden = false;
-    stopLifecycleExport();
-    resetLifecycleUI();
-  };
 });
 
 el.lifecycleExportCancel.addEventListener("click", () => {
-  stopLifecycleExport();
+  stopExport();
   el.lifecycleProgressText.textContent = "Cancelado.";
   el.lifecycleExportStart.disabled = false;
+});
+
+// Saves a search too big for the viewer: the whole time range, oldest
+// first, regardless of the line limit and order selected.
+function startRangeDownload(payload, total) {
+  const qs = new URLSearchParams();
+  qs.set("matchers", JSON.stringify(payload.matchers));
+  if (payload.orgId) qs.set("orgId", payload.orgId);
+  qs.set("start", payload.start);
+  qs.set("end", payload.end);
+
+  el.rangeDownloadNotice.textContent =
+    `Ojo: esta búsqueda tiene ${total.toLocaleString("es-ES")} líneas, demasiadas para verlas en la web ` +
+    `(máx. ${MAX_PREVIEW_LINES.toLocaleString("es-ES")}). No habrá previa: se descarga directamente todo el rango en un .txt.`;
+
+  startExport(qs, {
+    progress: el.rangeDownloadProgress,
+    fill: el.rangeDownloadFill,
+    text: el.rangeDownloadText,
+    error: el.searchError,
+    initialText: "Preparando la descarga…",
+  });
+}
+
+el.rangeDownloadCancel.addEventListener("click", () => {
+  stopExport();
+  resetExportUI({ progress: el.rangeDownloadProgress, fill: el.rangeDownloadFill });
 });
 
 // ---------- Init ----------

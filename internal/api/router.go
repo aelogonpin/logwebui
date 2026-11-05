@@ -20,6 +20,7 @@ func NewRouter(client *loki.Client, defaultLokiOrgID string, mimirClient *mimir.
 	mux.HandleFunc("/api/health", Health)
 	mux.HandleFunc("/api/config", h.Config)
 	mux.HandleFunc("/api/query", h.Query)
+	mux.HandleFunc("/api/count", h.Count)
 	mux.HandleFunc("/api/labels", h.Labels)
 	mux.HandleFunc("/api/label-values", h.LabelValues)
 	mux.HandleFunc("/api/export", h.Export)

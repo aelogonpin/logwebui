@@ -121,7 +121,8 @@
                   <option value="1000" selected>1000</option>
                   <option value="2000">2000</option>
                   <option value="5000">5000</option>
-                  <option value="custom">Personalizado…</option>
+                  <option value="all" hidden disabled>Todo el rango de fechas</option>
+                  <option value="custom">Líneas personalizadas…</option>
                 </select>
               </label>
               <label class="field">
@@ -140,6 +141,13 @@
             <span id="searchBtnLabel">Buscar logs</span>
           </button>
           <p class="error-text" id="searchError" hidden></p>
+
+          <div class="lifecycle-progress" id="rangeDownloadProgress" hidden>
+            <p class="download-notice" id="rangeDownloadNotice" role="status"></p>
+            <div class="lifecycle-progress-bar"><div class="lifecycle-progress-fill" id="rangeDownloadFill"></div></div>
+            <p class="lifecycle-progress-text" id="rangeDownloadText"></p>
+            <button type="button" class="btn btn-danger btn-sm" id="rangeDownloadCancel">Cancelar</button>
+          </div>
         </div>
 
         <div class="divider"></div>

@@ -539,6 +539,17 @@ input::placeholder {
   font-family: var(--font-mono);
 }
 
+.download-notice {
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--text);
+  background: var(--warn-bg);
+  border: 1px solid var(--warn);
+  border-radius: var(--radius-sm);
+  padding: 8px 10px;
+  margin: 0 0 10px;
+}
+
 /* Chips */
 
 .chip {
