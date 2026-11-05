@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"os"
 	"regexp"
@@ -144,10 +145,13 @@ func (h *Handlers) Export(w http.ResponseWriter, r *http.Request) {
 
 	// The window bounds, not firstNs/lastNs, delimit the walk: those two
 	// are only used to report progress.
-	err = h.loki.WalkRange(ctx, loki.QueryParams{
-		Matchers: matchers, OrgID: orgID, Direction: "forward",
+	params := loki.QueryParams{
+		Matchers: matchers, OrgID: orgID, Direction: "forward", Limit: loki.MaxPageSize,
 		Start: windowStart.Format(time.RFC3339Nano), End: windowEnd.Format(time.RFC3339Nano),
-	}, func(batch []loki.Entry, reachedNs int64) bool {
+	}
+	log.Printf("loki request: %s", h.loki.QueryRangeCurl(params))
+
+	err = h.loki.WalkRange(ctx, params, func(batch []loki.Entry, reachedNs int64) bool {
 		for _, e := range batch {
 			fmt.Fprintf(tmpFile, "%s  %s\n", nsToRFC3339(mustParseNs(e.Timestamp)), e.Line)
 		}

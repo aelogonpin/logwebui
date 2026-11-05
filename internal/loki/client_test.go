@@ -207,7 +207,7 @@ func fakePagedLoki(t *testing.T, timestamps []int64, pageCap int, calls *int) *h
 				}
 			}
 		}
-		json.NewEncoder(w).Encode(map[string]interface{}{
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
 			"status": "success",
 			"data": map[string]interface{}{
 				"result": []map[string]interface{}{
@@ -306,7 +306,7 @@ func TestClientQueryRangeSurvivesLokiSkippingLinesWhenTruncating(t *testing.T) {
 				}
 			}
 		}
-		json.NewEncoder(w).Encode(map[string]interface{}{
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
 			"status": "success",
 			"data": map[string]interface{}{
 				"result": []map[string]interface{}{
@@ -334,7 +334,7 @@ func TestClientCountLines(t *testing.T) {
 	var gotQuery string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotQuery = r.URL.Query().Get("query")
-		w.Write([]byte(`{"status":"success","data":{"resultType":"vector","result":[{"metric":{},"value":[1793833200,"508606"]}]}}`))
+		_, _ = w.Write([]byte(`{"status":"success","data":{"resultType":"vector","result":[{"metric":{},"value":[1793833200,"508606"]}]}}`))
 	}))
 	defer srv.Close()
 
@@ -355,7 +355,7 @@ func TestClientCountLines(t *testing.T) {
 
 func TestClientCountLinesNoData(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte(`{"status":"success","data":{"resultType":"vector","result":[]}}`))
+		_, _ = w.Write([]byte(`{"status":"success","data":{"resultType":"vector","result":[]}}`))
 	}))
 	defer srv.Close()
 
@@ -380,5 +380,39 @@ func TestClientQueryRangeSmallLimitIsOneCall(t *testing.T) {
 	}
 	if calls != 1 {
 		t.Errorf("expected exactly 1 call, got %d", calls)
+	}
+}
+
+func TestQueryRangeCurlNeverContainsThePassword(t *testing.T) {
+	client := NewClient("https://loki.example.com", "admin", "s3cret", "")
+	cmd := client.QueryRangeCurl(QueryParams{
+		Matchers: []LabelMatcher{{Key: "app", Op: "=", Value: "x"}},
+		Limit:    510000, Direction: "forward", OrgID: "acme'prod\nX: y",
+		Start: "2026-11-02T00:00:00Z", End: "2026-11-03T00:00:00Z",
+	})
+
+	for _, want := range []string{
+		"https://loki.example.com/loki/api/v1/query_range?",
+		"limit=5000",
+		"direction=forward",
+		`-u "$LOKI_USER:$LOKI_PASS"`,
+		`-H 'X-Scope-OrgID: acme'\''prodX: y'`,
+	} {
+		if !strings.Contains(cmd, want) {
+			t.Errorf("expected %q in: %s", want, cmd)
+		}
+	}
+	if strings.Contains(cmd, "s3cret") || strings.Contains(cmd, "\n") {
+		t.Errorf("command leaks the password or spans lines: %s", cmd)
+	}
+}
+
+func TestCountLinesCurl(t *testing.T) {
+	cmd := NewClient("https://loki.example.com", "", "", "acme").CountLinesCurl(QueryParams{
+		Matchers: []LabelMatcher{{Key: "app", Op: "=", Value: "x"}},
+		Start:    "2026-11-02T00:00:00Z", End: "2026-11-02T01:00:00Z",
+	})
+	if !strings.Contains(cmd, "/loki/api/v1/query?") || strings.Contains(cmd, "LOKI_USER") || !strings.Contains(cmd, "X-Scope-OrgID: acme") {
+		t.Errorf("unexpected command: %s", cmd)
 	}
 }

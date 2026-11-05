@@ -81,14 +81,17 @@ func (h *Handlers) Query(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), time.Duration(pages)*queryTimeout)
 	defer cancel()
 
-	entries, err := h.loki.QueryRange(ctx, loki.QueryParams{
+	params := loki.QueryParams{
 		Matchers:  req.Matchers,
 		Start:     req.Start,
 		End:       req.End,
 		Limit:     req.Limit,
 		Direction: req.Direction,
 		OrgID:     req.OrgID,
-	})
+	}
+	log.Printf("loki request: %s", h.loki.QueryRangeCurl(params))
+
+	entries, err := h.loki.QueryRange(ctx, params)
 	if err != nil {
 		log.Printf("query failed: selector=%s orgId=%s start=%s end=%s: %v", selector, effectiveOrgID, req.Start, req.End, err)
 		writeError(w, http.StatusBadGateway, err.Error())
@@ -125,12 +128,15 @@ func (h *Handlers) Count(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), queryTimeout)
 	defer cancel()
 
-	count, err := h.loki.CountLines(ctx, loki.QueryParams{
+	params := loki.QueryParams{
 		Matchers: req.Matchers,
 		Start:    req.Start,
 		End:      req.End,
 		OrgID:    req.OrgID,
-	})
+	}
+	log.Printf("loki request: %s", h.loki.CountLinesCurl(params))
+
+	count, err := h.loki.CountLines(ctx, params)
 	if err != nil {
 		writeError(w, http.StatusBadGateway, err.Error())
 		return

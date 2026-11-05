@@ -236,22 +236,10 @@ func parseTimeNs(s string) (int64, error) {
 // without fetching them. The query is a metric aggregation over a plain
 // selector, so like every other request it never contains "{{".
 func (c *Client) CountLines(ctx context.Context, p QueryParams) (int64, error) {
-	selector, err := BuildSelector(p.Matchers)
+	q, err := countValues(p)
 	if err != nil {
 		return 0, err
 	}
-	start, end, err := resolveBounds(p.Start, p.End)
-	if err != nil {
-		return 0, err
-	}
-	seconds := (end - start + int64(time.Second) - 1) / int64(time.Second)
-	if seconds < 1 {
-		seconds = 1
-	}
-
-	q := url.Values{}
-	q.Set("query", fmt.Sprintf("sum(count_over_time(%s[%ds]))", selector, seconds))
-	q.Set("time", strconv.FormatInt(end, 10))
 
 	var parsed struct {
 		Data struct {
@@ -273,8 +261,8 @@ func (c *Client) CountLines(ctx context.Context, p QueryParams) (int64, error) {
 	return strconv.ParseInt(raw, 10, 64)
 }
 
-// queryPage performs a single query_range call.
-func (c *Client) queryPage(ctx context.Context, p QueryParams) ([]Entry, error) {
+// queryRangeValues builds the query string of a query_range call.
+func queryRangeValues(p QueryParams) (url.Values, error) {
 	selector, err := BuildSelector(p.Matchers)
 	if err != nil {
 		return nil, err
@@ -299,6 +287,78 @@ func (c *Client) queryPage(ctx context.Context, p QueryParams) ([]Entry, error) 
 	}
 	if p.End != "" {
 		q.Set("end", p.End)
+	}
+	return q, nil
+}
+
+// QueryRangeCurl returns a curl command reproducing a search, to paste
+// into a terminal or import into an API client. The limit is capped at
+// MaxPageSize: QueryRange splits larger ones, which a single call can't.
+func (c *Client) QueryRangeCurl(p QueryParams) string {
+	if p.Limit > MaxPageSize {
+		p.Limit = MaxPageSize
+	}
+	q, err := queryRangeValues(p)
+	if err != nil {
+		return ""
+	}
+	return c.curlCommand("/loki/api/v1/query_range", q, p.OrgID)
+}
+
+// countValues builds the query string of a CountLines call.
+func countValues(p QueryParams) (url.Values, error) {
+	selector, err := BuildSelector(p.Matchers)
+	if err != nil {
+		return nil, err
+	}
+	start, end, err := resolveBounds(p.Start, p.End)
+	if err != nil {
+		return nil, err
+	}
+	seconds := (end - start + int64(time.Second) - 1) / int64(time.Second)
+	if seconds < 1 {
+		seconds = 1
+	}
+
+	q := url.Values{}
+	q.Set("query", fmt.Sprintf("sum(count_over_time(%s[%ds]))", selector, seconds))
+	q.Set("time", strconv.FormatInt(end, 10))
+	return q, nil
+}
+
+// CountLinesCurl is the CountLines counterpart of QueryRangeCurl.
+func (c *Client) CountLinesCurl(p QueryParams) string {
+	q, err := countValues(p)
+	if err != nil {
+		return ""
+	}
+	return c.curlCommand("/loki/api/v1/query", q, p.OrgID)
+}
+
+// curlCommand renders one Loki call. Credentials stay as shell variables
+// so the password never reaches the logs.
+func (c *Client) curlCommand(path string, q url.Values, orgID string) string {
+	cmd := "curl " + shellQuote(c.baseURL+path+"?"+q.Encode())
+	if c.user != "" {
+		cmd += ` -u "$LOKI_USER:$LOKI_PASS"`
+	}
+	if orgID = c.resolveOrgID(orgID); orgID != "" {
+		cmd += " -H " + shellQuote("X-Scope-OrgID: "+orgID)
+	}
+	return cmd
+}
+
+// shellQuote also strips line breaks, as the result ends up in a log line.
+func shellQuote(s string) string {
+	s = strings.NewReplacer("\n", "", "\r", "", "'", `'\''`).Replace(s)
+	return "'" + s + "'"
+}
+
+// queryPage performs a single query_range call.
+func (c *Client) queryPage(ctx context.Context, p QueryParams) ([]Entry, error) {
+	q, err := queryRangeValues(p)
+	if err != nil {
+		return nil, err
 	}
 
 	var parsed queryRangeResponse

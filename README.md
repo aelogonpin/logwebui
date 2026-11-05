@@ -342,6 +342,21 @@ líneas, así que ese cursor se saltaría líneas sin avisar. Una ventana que
 vuelve por debajo del límite está completa; si llega al límite, se
 descarta y se repite con la mitad de ancho.
 
+## Reproducir las consultas
+
+Cada búsqueda, conteo y exportación escribe en el log de la app la consulta
+equivalente a Loki como un comando `curl`, listo para pegarlo en una
+terminal o importarlo en Insomnia o Bruno:
+
+```
+loki request: curl 'https://loki.example.com/loki/api/v1/query_range?direction=forward&limit=5000&query=...' -u "$LOKI_USER:$LOKI_PASS" -H 'X-Scope-OrgID: acme-prod'
+```
+
+La contraseña nunca aparece en el log: al importarlo, sustituye
+`$LOKI_USER` y `$LOKI_PASS`, o exporta esas variables en la terminal. El
+`limit` se muestra como máximo a 5000: las búsquedas mayores se reparten
+en varias llamadas, y este comando reproduce solo la primera página.
+
 ## Despliegue en Kubernetes
 
 Manifiestos de ejemplo (Deployment + Service + Secret) en

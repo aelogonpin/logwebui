@@ -31,6 +31,10 @@ y este proyecto usa [Versionado Semántico](https://semver.org/lang/es/).
 - Los archivos descargados se nombran con el Org ID, los valores de los
   labels filtrados y la fecha de extracción, en vez de un nombre fijo.
 
+- Cada búsqueda, conteo y exportación registra en el log de la app la
+  consulta a Loki como comando `curl`, para reproducirla en Insomnia o
+  Bruno. Las credenciales nunca se registran.
+
 ### Corregido
 
 - Las búsquedas de más de 5000 líneas ya no fallan con
